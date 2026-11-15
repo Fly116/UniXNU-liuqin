@@ -49,3 +49,11 @@ board.toml 里每个 TODO 都有明确的取值方法和当前状态。
 
 下一步：上机看 `liuqin_milestone()` 的 `B<n>:` 里程碑（面板 + 1 MiB 环形缓冲，USB 调试口
 `liuqin_usb=1` 时同时流出），定位 bsd_init 的停点。
+
+## 致谢 / Acknowledgments
+
+- **qwen3.8-flash** — 本移植的自动化工程会话由驱动该模型的 DeepSeek Harness agent 完成：
+  Linux 工具链搭建、板级数据核实、ShengUfs SM8475 移植（fork 分支 `liuqin-sm8475`）、
+  21H461 storage-bindings 离线推导、userdata Linux 构建、实机里程碑诊断与
+  panic 可见化修复等系列迭代。
+- UniXNU 官方与各社区机型仓（尤其 sheng 模板与 mondrian 的 SM8475 实测数据）。
