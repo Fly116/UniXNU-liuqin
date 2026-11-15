@@ -197,7 +197,7 @@ kernel_args = [
   "-apfs_shared_datavolume",
   "offline-key-events=1",
   # "native-ufs-root=1",   # stub 内核没有 _sheng_pmgr_run 符号，先关掉这项 AMFI 预检
-  "native-ufs-stats-delay=30",
+  # native-ufs-stats-delay=30  (dropped: kernel command line hit the 1000-byte limit; re-add by trading another arg)
   "sheng-pmgr=2",            # TODO(liuqin): 复用 sheng 的 PMGR 探测，需在 SM8475 上验证或改名
   "armcpu-diagnostics=1",
   "sheng-disable-watchdogd=1",   # TODO(liuqin)

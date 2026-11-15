@@ -145,6 +145,19 @@
 - **H8 QEMU SIGKILL 支线**：launchd 签名/exec-policy 研究继续（host-only，独立于存储）
 - （并行）**v32 刷机包**：等机器，watch 重挂即可
 
+## 4.5 M1 实机寄存器记录（v33e，2026-11-16 00:2x，IMG_6897-6900）
+
+```
+UFSCLK gdsc=f022f000 axi=00000221 ahb=00000001 unipro=00000221
+UFSCLK tx=00000001 rx=00000001 aux=00000001 memgdsc=00000000(跳过)
+UFSHC  rd=1 cap=1587031f ver=00000300 is=00000400
+UFSHC  hcs=0000010f hce=00000001 utrlba=ff130000
+```
+判读：gdsc bit31=1（GDSC 上电）；全部分支 enable bit0=1；axi bit31=0（运行）；
+hce=1（控制器由固件保持启用）；utrlba=ff130000（固件请求表基址在场）→ **adopt 路径前提成立**。
+里程碑链 U58 probe-expert → U59 start-probe → U60..U63 + 四行值 → 启动继续到 B102-B106
+（mountroot 区，正常）。附带确认：mapPhys 换 withPhysicalAddress 后不再挂（H12 修复实机验证）。
+
 ## 5. 上机后的最短验证链（八步证据流的后两步）
 
 1. `fastboot boot` v33（H4 产物）→ 看 NativeUfs 里程碑：寄存器可读→GDSCR 过→adopt 列表→
