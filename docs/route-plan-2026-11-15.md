@@ -111,6 +111,10 @@
      `build-virtio-mmio-bindings.py --component RamBlock --directory build/ram-block` +
      `CONFIG_XNU_NATIVE_RAM_BLOCK=y` → libRamBlock.a 带 bindings 进链 → v33 可链。
 - （并行）**v32 刷机包**：等机器，watch 重挂即可
+- **H10（新坑，已修）**：personality 宏门控的 `KernelConfigTables.cpo` 不随 CONFIG 变化重编
+  （make 不感知 CFLAGS_ADD）→ 驱动链接进内核但 IOKit 从不 probe，症状 = "K49 无 panic 直接过"。
+  基座已加 personality-mode stamp（UniXNU@d883995）；v33b 起生效。
+  教训入档：**链接成功 ≠ 驱动会被实例化**，personality 表要单独验证（strings 查 "= NativeUfs;"）。
   `./unixnu build userdata --ipsw <本地> --dry-run` 核成员/大小 → 正式构建
   → 用 apfs.py（copy 自 mondrian）离线核 SHNGROOT 头、GPT、卷 UUID（应=04769D26-…）
   ✅验收：userdata.img 出成+report 三项 sha 全、UUID 匹配 board.toml
