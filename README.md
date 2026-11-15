@@ -2,7 +2,8 @@
 
 Xiaomi Pad 6 Pro / liuqin / SM8475 的 UniXNU 设备仓库，由 UniXNU-sheng 派生。
 
-状态：**不能构建，不能刷**。但板级关键数值已经从 stock 固件里核实完了，
+状态：**内核、UEFI 固件、payload、boot.img 都能在 Linux 主机上构建**（2026-11-13 验证）；
+实机 `fastboot boot` 尚未验证。板级关键数值已经从 stock 固件里核实完了，
 board.toml 里每个 TODO 都有明确的取值方法和当前状态。
 
     board.toml                 板级描述（userdata LBA、splash、FD 窗口已填实测值）
@@ -11,7 +12,7 @@ board.toml 里每个 TODO 都有明确的取值方法和当前状态。
     docs/vendor-inputs.md      stock UEFI 抽出的 154 个厂商输入 + uefiplat.cfg 硬数据
     docs/porting-plan.md       四阶段计划、通过标准、当前阻塞、立刻可做的事
     docs/liuqin-usb-debug.md   内核 USB CDC-ACM 调试口（LIQDBG001）：开关、四道自检门、移植对照表
-    patches/xnu/               49 个 UniXNU 基础补丁 + zzz-liuqin-usb-debug.patch（调试口本体）
+    patches/xnu/               基础补丁 + zzz-liuqin-usb-debug*.patch（USB 调试口、bsd_init 里程碑）
     tests/liuqin_usb_host_test.c  调试口逻辑的主机侧测试（gcc，不需要内核）
     tools/capture-liuqin-debug.ps1  主机侧抓取脚本（按 VID/PID+序列号定位 COM，置 DTR）
 
@@ -23,4 +24,28 @@ board.toml 里每个 TODO 都有明确的取值方法和当前状态。
     ../liuqin-nixos            主线 Linux 侧参考（面板/触控/ABL 身份/DTBO 资料）
     ../xiaomipad-6pro-mainline 主线内核与设备脚本参考
 
-下一步：写 uefi-liuqin 的 liuqinPkg（见 docs/porting-plan.md）。
+## 构建与打包（Linux，2026-11-13 验证）
+
+    cd ../UniXNU
+    export UNIXNU_DEVICE=$PWD/../UniXNU-liuqin UNIXNU_UEFI=$PWD/../uefi-liuqin \
+           UNIXNU_EDK2=$PWD/../uefi-liuqin/Mu_Basecore UNIXNU_TOOLCHAIN=$PWD/../toolchain
+
+    ./unixnu build kernel                 # out/liuqin/kernel/kernel.macho（含 prelink）
+    ./unixnu build firmware               # uefi-liuqin/Build/liuqinPkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd
+    ./unixnu build payload --kernel out/liuqin/kernel/kernel.macho \
+        --unique-chip-id 0x84750A0B0C0D0001
+    python3 ../UniXNU-liuqin/scripts/wrap-payload-mbr.py \
+        out/liuqin/payload/payload.img out/liuqin/payload/payload-mbr.img
+    ./unixnu bootimg --uefi ../uefi-liuqin \
+        --dtb ../uefi-liuqin/Resources/DTBs/liuqin.dtb \
+        --ramdisk out/liuqin/payload/payload-mbr.img
+
+产物 `out/liuqin/boot/boot.img`（约 70 MiB = `gzip(BootShim+UEFI FD)` + Cape DTB +
+68 MiB payload ramdisk）。`fastboot boot` 这个镜像即可，内存运行，不写分区。
+
+内核补丁套用：schema 1 的补丁序列现在由 `xnu-work/.patches.sha256` 戳保证只套一次
+（补丁互相重叠，第二遍既不能 apply 也不能 reverse-check）；删掉 `.cache/xnu-work`
+或改动任一补丁才会重新套用。
+
+下一步：上机看 `liuqin_milestone()` 的 `B<n>:` 里程碑（面板 + 1 MiB 环形缓冲，USB 调试口
+`liuqin_usb=1` 时同时流出），定位 bsd_init 的停点。

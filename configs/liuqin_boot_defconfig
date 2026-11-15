@@ -22,7 +22,11 @@ CONFIG_XNU_BUILD_ARCHIVES=y
 CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
 CONFIG_XNU_EXTRA_LD_ARCHIVES=""
 
+# bring-up only, route-plan H9: VerifiedRoot policy chain not ported to Linux yet;
+# this compiles the transport with NATIVE_VERIFIED_BLOCK=0 (unverified reads).
+# Do not copy this line to a release config; liuqin_defconfig keeps =y.
 CONFIG_XNU_NATIVE_UFS=y
+CONFIG_XNU_NATIVE_UFS_VERIFIED=n
 CONFIG_XNU_NATIVE_AES=n
 CONFIG_XNU_NATIVE_VIRTIO_BLOCK=n
 CONFIG_XNU_NATIVE_RAM_BLOCK=n

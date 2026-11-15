@@ -1,0 +1,51 @@
+liuqin: volatile panic log fallback (kernel-owned 128 KiB buffer).
+
+The liuqin ADT carries no pram node and no /chosen/embedded-panic-log-size,
+so with XNU_DT_PANIC_REGION=1 check_for_panic_log() returns without setting
+gPanicBase; debug_log_init then prints its error and a real panic loses its
+log text. Same approach as the K60/Pong port, without the PONG macro.
+Compiled in only when pe_init.o gets -DXNU_LIUQIN_VOLATILE_PANIC_LOG=1.
+diff --git a/pexpert/arm/pe_init.c b/pexpert/arm/pe_init.c
+index 433b6cd..ac7102f 100644
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -73,6 +73,9 @@ clock_frequency_info_t gPEClockFrequencyInfo;
+ vm_offset_t gPanicBase = 0;
+ unsigned int gPanicSize;
+ struct embedded_panic_header *panic_info = NULL;
++#if defined(XNU_LIUQIN_VOLATILE_PANIC_LOG) && XNU_LIUQIN_VOLATILE_PANIC_LOG
++static uint8_t liuqin_volatile_panic_log[128 * 1024] __attribute__((aligned(4096)));
++#endif
+ 
+ #if (DEVELOPMENT || DEBUG) && defined(XNU_TARGET_OS_BRIDGE)
+ /*
+@@ -112,6 +115,19 @@ check_for_panic_log(void)
+ 	uintptr_t const *reg_prop;
+ 	uint32_t const *panic_region_length;
+ 
++#if defined(XNU_LIUQIN_VOLATILE_PANIC_LOG) && XNU_LIUQIN_VOLATILE_PANIC_LOG
++	/*
++	 * liuqin has no Apple PRAM reservation in its supplied DT. Keep the
++	 * normal embedded panic machinery valid with kernel-owned RAM. The
++	 * contents are intentionally volatile and never advertised to
++	 * firmware as persistent.
++	 */
++	gPanicBase = (vm_offset_t)liuqin_volatile_panic_log;
++	gPanicSize = sizeof(liuqin_volatile_panic_log);
++	panic_text_len = gPanicSize - sizeof(struct embedded_panic_header);
++	goto liuqin_panic_region_ready;
++#endif
++
+ 	/*
+ 	 * DT properties for the panic region are populated by UpdateDeviceTree() in iBoot:
+ 	 *
+@@ -163,6 +179,9 @@ check_for_panic_log(void)
+ 	}
+ #endif /* DEVELOPMENT && defined(XNU_TARGET_OS_BRIDGE) */
+ 
++#endif
++#if defined(XNU_LIUQIN_VOLATILE_PANIC_LOG) && XNU_LIUQIN_VOLATILE_PANIC_LOG
++liuqin_panic_region_ready:
+ #endif
+ 	panic_info = (struct embedded_panic_header *)gPanicBase;
+ 

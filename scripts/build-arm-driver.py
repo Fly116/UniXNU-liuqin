@@ -2,6 +2,7 @@
 """Compile the generic platform expert against the actual source-kernel ABI."""
 import argparse
 import json
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -75,8 +76,18 @@ if component in ('NativeVirtioBlock', 'NativeRamBlock', 'NativeUfs'):
     if args.verified_root_bundle:
         command += ['-DNATIVE_VERIFIED_BLOCK_MULTI_POLICY=1']
 if component == 'NativeUfs':
+    # liuqin bring-up gate (route-plan H9): the VerifiedRoot policy bundle chain is
+    # built by scripts/build-owner-os-policy.py, which needs macOS hdiutil/diskutil.
+    # Until that builder is ported to Linux, the transport can be compiled with the
+    # official NATIVE_VERIFIED_BLOCK=0 mode (device publishes, reads are NOT
+    # policy-verified). The default stays on: only liuqin_boot_defconfig opts out,
+    # and it says so.
+    verified = os.environ.get('XNU_NATIVE_UFS_VERIFIED', '1')
+    if verified not in ('0', '1'):
+        raise SystemExit('XNU_NATIVE_UFS_VERIFIED must be 0 or 1')
     command += ['-I', str(ROOT / 'kits/VerifiedRoot/include'), '-I', str(ROOT / 'drivers/NativeVirtioBlock'),
-                '-DNATIVE_VERIFIED_BLOCK=1', '-DNATIVE_VERIFIED_BLOCK_MULTI_POLICY=1', '-mgeneral-regs-only']
+                '-DNATIVE_VERIFIED_BLOCK=' + verified, '-DNATIVE_VERIFIED_BLOCK_MULTI_POLICY=' + verified,
+                '-mgeneral-regs-only']
 if component=='NativeOfflineGPU':
     command += ['-I',str(ROOT/'drivers/NativeVirtioConsole')]
 if component in ('NativeLegacyDisplay','NativeHidInput'):

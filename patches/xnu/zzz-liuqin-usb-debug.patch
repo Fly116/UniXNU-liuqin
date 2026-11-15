@@ -1,207 +1,14 @@
-diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
---- a/osfmk/arm64/start.s
-+++ b/osfmk/arm64/start.s
-@@ -222,5 +222,14 @@
- 	.align	3
- 	.globl EXT(_start)
- LEXT(_start)
-+	movz	x26, #0xb818, lsl #16
-+	movz	w27, #0xffff
-+	movk	w27, #0xff00, lsl #16
-+	mov	x28, #0x10000
-+LiqinEntryBar:
-+	str	w27, [x26], #4
-+	subs	x28, x28, #1
-+	b.ne	LiqinEntryBar
-+	dsb	sy
- 	b	EXT(start_first_cpu)
- 
-@@ -610,4 +610,58 @@
- 	/* Setup the KVA bootstrap mapping */
- 	lsr		x5,  x24, #(ARM_TT_L2_SHIFT)
- 	create_bootstrap_mapping x14, x15, x5, x3, x2, x9, x10, x11, x12, x13
-+	/* liuqin: the V=P map XNU builds does not reach the boot PC on this */
-+	/* board (the L2 slot for the entry reads back zero) and the frame- */
-+	/* buffer sits outside the load window. Fill both into the V=P table */
-+	/* before the MMU goes on, with exactly ARM_TTE_BOOT_BLOCK: 2 MiB */
-+	/* blocks, valid|block|AF|SH=outer|AttrIndx=writeback (0x601). */
-+	ldr	x9, [x20, BA_PHYS_BASE]
-+	ldr	x10, [x20, BA_MEM_SIZE]
-+	movz	x11, #0x1000, lsl #16		// at least the 256 MiB owned window
-+	cmp	x10, x11
-+	csel	x10, x11, x10, lo
-+	mov	x17, x9
-+	mov	x19, lr
-+	bl	LiqinFill
-+	movz	x9, #0xb800, lsl #16		// framebuffer, 20 MiB
-+	mov	x17, x9
-+	mov	x10, #10
-+	lsl	x10, x10, #21
-+	bl	LiqinFill
-+	mov	lr, x19
-+	dsb	sy
-+	b	LiqinFillDone
-+
-+	/* x9 = virtual base, x10 = size, x17 = physical cursor, x25 = V=P root */
-+LiqinFill:
-+	ubfx	x11, x9, #30, #9
-+	lsl	x11, x11, #3
-+	add	x11, x25, x11
-+	ldr	x12, [x11]
-+	and	x13, x12, #3
-+	cmp	x13, #3
-+	b.ne	LiqinFillOut			// no L2 page here: leave it alone
-+	ubfx	x12, x12, #12, #36
-+	lsl	x12, x12, #12
-+	ubfx	x11, x9, #21, #9
-+	lsl	x11, x11, #3
-+	add	x12, x12, x11			// L2 entry pointer
-+	mov	x15, #0x200
-+	sub	x15, x15, x11, lsr #3		// entries left in this page
-+	lsr	x14, x10, #21
-+	cmp	x14, x15
-+	csel	x14, x15, x14, hi		// never walk past the page
-+	movz	x13, #0x601
-+LiqinFillLoop:
-+	cbz	x14, LiqinFillOut
-+	ubfx	x16, x17, #21, #27
-+	lsl	x16, x16, #21
-+	orr	x16, x16, x13
-+	str	x16, [x12], #8
-+	add	x17, x17, #0x200000
-+	subs	x14, x14, #1
-+	b.ne	LiqinFillLoop
-+LiqinFillOut:
-+	ret
-+LiqinFillDone:
- 
-@@ -634,5 +634,14 @@
-  *	TPIDRRO_EL0 - CPU number
-  */
- common_start:
-+	movz	x26, #0xb81c, lsl #16
-+	movz	w27, #0xff00
-+	movk	w27, #0xffff, lsl #16
-+	mov	x28, #0x10000
-+LiqinMapBar:
-+	str	w27, [x26], #4
-+	subs	x28, x28, #1
-+	b.ne	LiqinMapBar
-+	dsb	sy
- 
- #if HAS_NEX_PG
-@@ -693,5 +693,14 @@
- 	isb
- 	tlbi	vmalle1
- 	dsb		ish
-+	movz	x26, #0xb820, lsl #16
-+	movz	w27, #0xff
-+	movk	w27, #0xff00, lsl #16
-+	mov	x28, #0x10000
-+LiqinMairBar:
-+	str	w27, [x26], #4
-+	subs	x28, x28, #1
-+	b.ne	LiqinMairBar
-+	dsb	sy
- 
- 
-@@ -750,14 +750,74 @@
- #endif /* HAS_APPLE_PAC */
- 
- 	// Enable caches, MMU, ROP and JOP
-+	movz	x26, #0xb824, lsl #16
-+	movz	w27, #0xff
-+	movk	w27, #0xffff, lsl #16
-+	mov	x28, #0x10000
-+LiqinVbarBar:
-+	str	w27, [x26], #4
-+	subs	x28, x28, #1
-+	b.ne	LiqinVbarBar
-+	dsb	sy
-+	/* liuqin: read the L2 entry for this PC back and show the verdict. */
-+	/* green = valid block that maps this very 2 MiB, red = anything else. */
-+LiqinLampHere:
-+	adr	x9, LiqinLampHere
-+	ubfx	x11, x9, #30, #9
-+	lsl	x11, x11, #3
-+	add	x11, x25, x11
-+	ldr	x12, [x11]
-+	and	x13, x12, #3
-+	cmp	x13, #3
-+	b.ne	LiqinLampBad
-+	ubfx	x12, x12, #12, #36
-+	lsl	x12, x12, #12
-+	ubfx	x13, x9, #21, #9
-+	lsl	x13, x13, #3
-+	add	x12, x12, x13
-+	ldr	x12, [x12]
-+	and	x13, x12, #3
-+	cmp	x13, #1
-+	b.ne	LiqinLampBad
-+	movz	x13, #0xffe0, lsl #16
-+	movk	x13, #0xffff, lsl #32		// block address field
-+	and	x12, x12, x13
-+	and	x13, x9, x13
-+	cmp	x12, x13
-+	b.ne	LiqinLampBad
-+	movz	w27, #0xff00
-+	movk	w27, #0xff00, lsl #16		// green
-+	b	LiqinLampDraw
-+LiqinLampBad:
-+	movz	w27, #0x0000
-+	movk	w27, #0xffff, lsl #16		// red
-+LiqinLampDraw:
-+	movz	x26, #0xb838, lsl #16
-+	mov	x28, #0x10000
-+LiqinLampBar:
-+	str	w27, [x26], #4
-+	subs	x28, x28, #1
-+	b.ne	LiqinLampBar
-+	dsb	sy
--	MOV64   x0, SCTLR_EL1_DEFAULT
-+	mrs	x0, SCTLR_EL1			// liuqin: keep the firmware's bits
-+	orr	x0, x0, #1			// (RES1, EOS/IESB, nTWI/nTWE) and
-+						// only add M
- 	MSR_SCTLR_EL1_X0
- 	isb		sy
-+	movz	x26, #0xb828, lsl #16
-+	movz	w27, #0xa500
-+	movk	w27, #0xffff, lsl #16
-+	mov	x28, #0x10000
-+LiqinMmuBar:
-+	str	w27, [x26], #4
-+	subs	x28, x28, #1
-+	b.ne	LiqinMmuBar
-+	dsb	sy
- 
- #if !VMAPPLE
--	MOV64   x1, SCTLR_EL1_DEFAULT
-+	mov	x1, x0				// compare against what we wrote
- 	cmp		x0, x1
- 	bne		.
- #endif /* !VMAPPLE */
- 
- #if (!CONFIG_KERNEL_INTEGRITY || (CONFIG_KERNEL_INTEGRITY && !defined(KERNEL_INTEGRITY_WT)))
-@@ -816,5 +816,14 @@
- #endif
- 
- 	// Return to arm_init()
-+	movz	x26, #0xb82c, lsl #16
-+	movz	w27, #0xffff
-+	movk	w27, #0xffff, lsl #16
-+	mov	x28, #0x10000
-+LiqinRetBar:
-+	str	w27, [x26], #4
-+	subs	x28, x28, #1
-+	b.ne	LiqinRetBar
-+	dsb	sy
- 	ret
- 
+liuqin: USB CDC-ACM debug console, framebuffer milestone console and boot-progress call sites.
+
+Generated as the incremental diff of the full patch series (all other patches, including
+zzz-boot-progress.patch, applied) against the final ported tree, so it applies
+cleanly in name order and reverses cleanly on the working tree. New files:
+bsd/dev/liuqin_debug.c, liuqin_log_ring.h, liuqin_usb_debug.c, liuqin_usb_protocol.h.
 diff --git a/bsd/conf/files.arm64 b/bsd/conf/files.arm64
 index a77bd10..3d9ae38 100644
 --- a/bsd/conf/files.arm64
 +++ b/bsd/conf/files.arm64
-@@ -4,6 +4,8 @@
+@@ -4,6 +4,8 @@ bsd/dev/arm/km.c		standard
  bsd/dev/arm/kern_machdep.c	standard
  bsd/dev/arm/stubs.c		standard
  bsd/dev/arm/systemcalls.c       standard
@@ -212,10 +19,10 @@ index a77bd10..3d9ae38 100644
  
 diff --git a/bsd/dev/liuqin_debug.c b/bsd/dev/liuqin_debug.c
 new file mode 100644
-index 0000000..baef08b
+index 0000000..2d1ad1b
 --- /dev/null
 +++ b/bsd/dev/liuqin_debug.c
-@@ -0,0 +1,487 @@
+@@ -0,0 +1,488 @@
 +/* Console mirror for the liuqin USB debug port.
 + * Best effort: any context, never waits, never touches storage.
 + */
@@ -703,6 +510,7 @@ index 0000000..baef08b
 +	}
 +	liuqin_early_marker(stage);
 +}
++
 diff --git a/bsd/dev/liuqin_log_ring.h b/bsd/dev/liuqin_log_ring.h
 new file mode 100644
 index 0000000..049e603
@@ -756,6 +564,7 @@ index 0000000..049e603
 +#endif
 diff --git a/bsd/dev/liuqin_usb_debug.c b/bsd/dev/liuqin_usb_debug.c
 new file mode 100644
+index 0000000..bf89a23
 --- /dev/null
 +++ b/bsd/dev/liuqin_usb_debug.c
 @@ -0,0 +1,988 @@
@@ -1828,121 +1637,8 @@ index 0000000..26cca0f
 +	return LQUSB_BAD;
 +}
 +#endif
-diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
---- a/osfmk/arm/arm_init.c
-+++ b/osfmk/arm/arm_init.c
-@@ -352,7 +352,8 @@
- 	uint64_t        xmaxmem;
- 	thread_t        thread;
- 	DTEntry chosen = NULL;
- 	unsigned int dt_entry_size = 0;
-+	{ extern void liuqin_stage(unsigned); liuqin_stage(1); }
- 
- 	arm_setup_pre_sign();
- 
-@@ -370,7 +370,8 @@
- #endif /* defined(HAS_APPLE_PAC) */
- 
- 	PE_init_platform(FALSE, args); /* Get platform expert set up */
- 	boot_progress_init();
-+	{ extern void liuqin_stage(unsigned); liuqin_stage(2); }
- 
- #if __arm64__
- 	configure_timer_apple_regs();
-@@ -522,7 +522,9 @@
- #endif  /* __ARM_PAN_AVAILABLE__ */
- 
- 	boot_progress_stage("arm_vm_init enter");
-+	{ extern void liuqin_stage(unsigned); liuqin_stage(3); }
- 	arm_vm_init(xmaxmem, args);
-+	{ extern void liuqin_stage(unsigned); liuqin_stage(4); }
- 	boot_progress_stage("arm_vm_init returned");
- 
- 	if (debug_boot_arg) {
-diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
-index a688021..1d6d047 100644
---- a/osfmk/arm64/arm_vm_init.c
-+++ b/osfmk/arm64/arm_vm_init.c
-@@ -1829,6 +1829,7 @@
- 	uint64_t         mem_segments;
- 	vm_offset_t      ptpage_vaddr;
- 	vm_map_address_t dynamic_memory_begin;
-+	{ extern void liuqin_stage(unsigned); liuqin_stage(5); }
- 
- 	/*
- 	 * Get the virtual and physical kernel-managed memory base from boot_args.
-@@ -1864,6 +1865,7 @@
- 		panic("Unsupported memory configuration %lx", mem_size);
- 	}
- #endif
-+	{ extern void liuqin_stage(unsigned); liuqin_stage(8); }
- 
- #if defined(ARM_LARGE_MEMORY)
- 	unsigned long physmap_l1_entries = ((real_phys_size + ARM64_PHYSMAP_SLIDE_RANGE) >> ARM_TT_L1_SHIFT) + 1;
-@@ -1920,6 +1922,7 @@
- 
- 	boot_tte = (tt_entry_t *)&bootstrap_pagetables;
- 	boot_ttep = kvtophys((vm_offset_t)boot_tte);
-+	{ extern void liuqin_stage(unsigned); liuqin_stage(9); }
- 
- #if DEVELOPMENT || DEBUG
- 	/* Sanity check - assert that BOOTSTRAP_TABLE_SIZE is sufficiently-large to
-@@ -1978,6 +1981,7 @@
- 	 *   the so called physical aperture should be statically mapped
- 	 */
- 	init_ptpages(cpu_tte, gVirtBase, dynamic_memory_begin, TRUE, ARM_TTE_TABLE_AP(ARM_TTE_TABLE_AP_USER_NA));
-+	{ extern void liuqin_stage(unsigned); liuqin_stage(10); }
- 
- #if defined(ARM_LARGE_MEMORY)
- 	/*
-@@ -2102,6 +2106,7 @@
- 	vm_prelink_edata = segPRELINKDATAB + segSizePRELINKDATA;
- 
- 	arm_vm_prot_init(args);
-+	{ extern void liuqin_stage(unsigned); liuqin_stage(11); }
- 
- 	/*
- 	 * Initialize the page tables for the low globals:
-@@ -2148,16 +2153,18 @@
- 	arm_set_user_tbi();
- 
- 	arm_vm_physmap_init(args);
-+	{ extern void liuqin_stage(unsigned); liuqin_stage(12); }
- 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
- 
- #if XNU_MONITOR
- 	ml_enable_monitor();
- #endif
- 
--	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
-+	set_mmu_ttb(boot_ttep & TTBR_BADDR_MASK);	/* liuqin: keep the V=P map so the panel stays writable */
- 
- 	flush_mmu_tlb();
- 	kva_active = TRUE;
-+	{ extern void liuqin_stage(unsigned); liuqin_stage(13); }
- 	// global table pointers may need to be different due to physical aperture remapping
- 	cpu_tte = (tt_entry_t*)(phystokv(cpu_ttep));
- 	invalid_tte = (tt_entry_t*)(phystokv(invalid_ttep));
-@@ -2209,6 +2216,7 @@
- 		flush_mmu_tlb();
- 	}
- 
-+	{ extern void liuqin_stage(unsigned); liuqin_stage(14); }
- 	sane_size = mem_size - (avail_start - gPhysBase);
- 	max_mem = mem_size;
- 	vm_kernel_slid_base = segLOWESTTEXT;
-@@ -2253,7 +2261,9 @@
-     }
- #endif
- #endif
-+	{ extern void liuqin_stage(unsigned); liuqin_stage(15); }
- 	pmap_bootstrap(dynamic_memory_begin);
-+	{ extern void liuqin_stage(unsigned); liuqin_stage(7); }
- 
- 	disable_preemption();
- 
 diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
-index f394e74..32144da 100644
+index f394e74..c326738 100644
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
 @@ -568,6 +568,14 @@ void
@@ -1971,7 +1667,7 @@ index f394e74..32144da 100644
  
  #if DEBUG_BSDINIT
  #define bsd_init_kprintf(x, ...) kprintf("bsd_init: " x, ## __VA_ARGS__)
-@@ -591,8 +601,11 @@ bsd_init(void)
+@@ -591,15 +601,19 @@ bsd_init(void)
  #endif
  
  	throttle_init();
@@ -1983,146 +1679,283 @@ index f394e74..32144da 100644
  #if CONFIG_DEV_KMEM
 +	liuqin_milestone("B", "at_dev_kmem");
  	bsd_init_kprintf("calling dev_kmem_init\n");
-@@ -600,4 +600,5 @@
+ 	dev_kmem_init();
+ #endif
  
  	/* Initialize kauth subsystem before instancing the first credential */
 +	liuqin_milestone("B", "at_kauth");
  	bsd_init_kprintf("calling kauth_init\n");
  	kauth_init();
-@@ -628,4 +628,5 @@
+ 
+@@ -628,6 +642,7 @@ bsd_init(void)
+ 	    kernel_task, &kerntask_ro_data);
  
  	/* give kernproc a name */
 +	liuqin_milestone("B", "at_process_name");
  	bsd_init_kprintf("calling process_name\n");
  	process_name("kernel_task", kernproc);
-@@ -655,4 +655,5 @@
+ 
+@@ -655,6 +670,7 @@ bsd_init(void)
+ 		    "current task is not kernel task\n");
  	}
  
 +	liuqin_milestone("B", "at_bsdthread_info");
  	bsd_init_kprintf("calling get_bsdthread_info\n");
  	ut = current_uthread();
-@@ -749,4 +749,5 @@
+ 
+@@ -749,6 +765,7 @@ bsd_init(void)
+ 	/*
  	 * Charge root for one process: launchd.
  	 */
 +	liuqin_milestone("B", "at_chgproccnt");
  	bsd_init_kprintf("calling chgproccnt\n");
  	(void)chgproccnt(0, 1);
-@@ -756,4 +756,5 @@
+ 
+@@ -756,6 +773,7 @@ bsd_init(void)
+ 	 *	Allocate a kernel submap for pageable memory
  	 *	for temporary copying (execve()).
  	 */
 +	liuqin_milestone("B", "at_kmem_suballoc");
  	bsd_init_kprintf("calling kmem_suballoc\n");
  	bsd_pageable_map = kmem_suballoc(kernel_map,
-@@ -772,4 +772,5 @@
+ 	    &bsd_pageable_range.min_address,
+@@ -772,6 +790,7 @@ bsd_init(void)
+ 	 *		happen after a credential has been associated with
  	 *		the kernel task.
  	 */
 +	liuqin_milestone("B", "at_bsd_bufferinit");
  	bsd_init_kprintf("calling bsd_bufferinit\n");
  	bsd_bufferinit();
-@@ -779,2 +779,3 @@
+ 
+@@ -785,10 +804,12 @@ bsd_init(void)
+ 	/*
+ 	 * Initialize the calendar.
  	 */
 +	liuqin_milestone("B", "at_iokit_time");
  	bsd_init_kprintf("calling IOKitInitializeTime\n");
-@@ -783,2 +783,3 @@
+ 	IOKitInitializeTime();
+ 
  	/* Initialize the file systems. */
 +	liuqin_milestone("B", "at_vfsinit");
  	bsd_init_kprintf("calling vfsinit\n");
-@@ -788,2 +788,3 @@
+ 	vfsinit();
+ #if DEVELOPMENT || DEBUG
+@@ -815,6 +836,7 @@ bsd_init(void)
+ 
+ #if CONFIG_PROC_UUID_POLICY
  	/* Initial proc_uuid_policy subsystem */
 +	liuqin_milestone("B", "at_proc_uuid");
  	bsd_init_kprintf("calling proc_uuid_policy_init()\n");
-@@ -799,2 +799,3 @@
+ 	proc_uuid_policy_init();
+ #endif
+@@ -826,6 +848,7 @@ bsd_init(void)
+ #endif /* CONFIG_MBUF_MCACHE */
+ 
  	/* Initialize mbuf's. */
 +	liuqin_milestone("B", "at_mbinit");
  	bsd_init_kprintf("calling mbinit\n");
-@@ -818,2 +818,3 @@
+ 	mbinit();
+ 	restricted_in_port_init();
+@@ -845,6 +868,7 @@ bsd_init(void)
+ 	knote_init();
+ 
  	/* Initialize event handler */
 +	liuqin_milestone("B", "at_evthandler");
  	bsd_init_kprintf("calling eventhandler_init\n");
-@@ -887,2 +887,3 @@
+ 	eventhandler_init();
+ 
+@@ -923,6 +947,7 @@ bsd_init(void)
+ 	}
+ #endif
  
 +	liuqin_milestone("B", "at_autoconf");
  	bsd_init_kprintf("calling bsd_autoconf\n");
-@@ -962,2 +962,3 @@
+ 	bsd_autoconf();
+ 
+@@ -1002,6 +1027,7 @@ bsd_init(void)
+ 	net_init_run();
+ #endif /* NETWORKING */
  
 +	liuqin_milestone("B", "at_inittodr");
  	bsd_init_kprintf("calling inittodr\n");
-@@ -969,2 +969,3 @@
+ 	inittodr(0);
+ 
+@@ -1009,12 +1035,15 @@ bsd_init(void)
+ 	while (TRUE) {
+ 		int err;
  
 +	liuqin_milestone("B", "at_setconf");
  		bsd_init_kprintf("calling setconf\n");
-@@ -971,2 +971,3 @@
  		setconf();
 +	liuqin_milestone("B", "setconf_done");
  #if CONFIG_NETBOOT
-@@ -975,2 +975,3 @@
+ 		netboot = (mountroot == netboot_mountroot);
+ #endif
  
 +	liuqin_milestone("B", "at_mountroot");
  		bsd_init_kprintf("vfs_mountroot\n");
-@@ -1000,2 +1000,3 @@
+ 		boot_progress_stage("vfs_mountroot enter");
+ 		if (0 == (err = vfs_mountroot())) {
+@@ -1042,6 +1071,7 @@ bsd_init(void)
+ 
+ 	mountlist.tqh_first->mnt_flag |= MNT_ROOTFS;
  
 +	liuqin_milestone("B", "at_vfsroot");
  	bsd_init_kprintf("calling VFS_ROOT\n");
-@@ -1126,2 +1126,3 @@
+ 	/* Get the vnode for '/'.  Set fdp->fd_fd.fd_cdir to reference it. */
+ 	if (VFS_ROOT(mountlist.tqh_first, &init_rootvnode, vfs_context_kernel())) {
+@@ -1201,6 +1231,7 @@ bsd_init(void)
+ #endif /* CONFIG_BASESYSTEMROOT */
+ 
  	/* Initialize signal state for process 0. */
 +	liuqin_milestone("B", "at_siginit");
  	bsd_init_kprintf("calling siginit\n");
-@@ -1191,2 +1191,3 @@
+ 	siginit(kernproc);
+ 
+@@ -1292,8 +1323,10 @@ bsdinit_task(void)
+ kern_return_t
+ bsd_autoconf(void)
  {
 +	liuqin_milestone("B", "at_kminit");
  	kprintf("bsd_autoconf: calling kminit\n");
-@@ -1193,2 +1193,3 @@
  	kminit();
 +	liuqin_milestone("B", "kminit_done");
  
-@@ -1200,2 +1200,3 @@
+ 	/*
+ 	 * Early startup for bsd pseudodevices.
+@@ -1301,6 +1334,7 @@ bsd_autoconf(void)
+ 	{
+ 		struct pseudo_init *pi;
  
 +	liuqin_milestone("B", "at_pseudo");
  		for (pi = pseudo_inits; pi->ps_func; pi++) {
-@@ -1218,2 +1218,3 @@
+ 			(*pi->ps_func)(pi->ps_count);
+ 		}
+@@ -1327,6 +1361,7 @@ setconf(void)
+ 	kern_return_t   err;
+ 
  	err = IOFindBSDRoot(rootdevice, sizeof(rootdevice), &rootdev, &flags);
 +	liuqin_milestone("B", "iofindroot_done");
  	if (err) {
-diff --git a/osfmk/console/serial_console.c b/osfmk/console/serial_console.c
-index 715c545..1050c9c 100644
---- a/osfmk/console/serial_console.c
-+++ b/osfmk/console/serial_console.c
-@@ -1,4 +1,5 @@
- #include <kern/boot_progress.h>
-+extern void liuqin_debug_putc(char c);
- /*
-  * Copyright (c) 2000-2020 Apple, Inc. All rights reserved.
-  *
-@@ -252,6 +253,7 @@
- static inline void
- _cnputc(char c, bool poll)
- {
-+	liuqin_debug_putc(c);
- 	if (boot_progress_active()) { boot_progress_putc(c); return; }
- 	bool in_debugger = (kernel_debugger_entry_count > 0);
- 	const uint32_t idx = get_cons_ops_index();
-diff --git a/pexpert/arm/pe_kprintf.c b/pexpert/arm/pe_kprintf.c
-index 3c440ec..934452b 100644
---- a/pexpert/arm/pe_kprintf.c
-+++ b/pexpert/arm/pe_kprintf.c
-@@ -1,4 +1,5 @@
- #include <kern/boot_progress.h>
-+extern void liuqin_debug_putc(char c);
- /*
-  * Copyright (c) 2000-2019 Apple Inc. All rights reserved.
-  */
-@@ -158,6 +159,7 @@
- static void
- serial_putc_crlf(char c)
- {
-+	liuqin_debug_putc(c);
- 	if (c == '\n') {
- 		uart_putc('\r');
+ 		printf("setconf: IOFindBSDRoot returned an error (%d);"
+ 		    "setting rootdevice to 'sd0a'.\n", err);     /* XXX DEBUG TEMP */
+diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
+index 7187c15..5747863 100644
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -353,6 +353,7 @@ arm_init(
+ 	thread_t        thread;
+ 	DTEntry chosen = NULL;
+ 	unsigned int dt_entry_size = 0;
++	{ extern void liuqin_stage(unsigned); liuqin_stage(1); }
+ 
+ 	arm_setup_pre_sign();
+ 
+@@ -371,6 +372,7 @@ arm_init(
+ 
+ 	PE_init_platform(FALSE, args); /* Get platform expert set up */
+ 	boot_progress_init();
++	{ extern void liuqin_stage(unsigned); liuqin_stage(2); }
+ 
+ #if __arm64__
+ 	configure_timer_apple_regs();
+@@ -532,7 +534,9 @@ arm_init(
+ #endif  /* __ARM_PAN_AVAILABLE__ */
+ 
+ 	boot_progress_stage("arm_vm_init enter");
++	{ extern void liuqin_stage(unsigned); liuqin_stage(3); }
+ 	arm_vm_init(xmaxmem, args);
++	{ extern void liuqin_stage(unsigned); liuqin_stage(4); }
+ 	boot_progress_stage("arm_vm_init returned");
+ 
+ 	if (debug_boot_arg) {
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+index a688021..1d6d047 100644
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1829,6 +1829,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	uint64_t         mem_segments;
+ 	vm_offset_t      ptpage_vaddr;
+ 	vm_map_address_t dynamic_memory_begin;
++	{ extern void liuqin_stage(unsigned); liuqin_stage(5); }
+ 
+ 	/*
+ 	 * Get the virtual and physical kernel-managed memory base from boot_args.
+@@ -1864,6 +1865,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 		panic("Unsupported memory configuration %lx", mem_size);
  	}
+ #endif
++	{ extern void liuqin_stage(unsigned); liuqin_stage(8); }
+ 
+ #if defined(ARM_LARGE_MEMORY)
+ 	unsigned long physmap_l1_entries = ((real_phys_size + ARM64_PHYSMAP_SLIDE_RANGE) >> ARM_TT_L1_SHIFT) + 1;
+@@ -1920,6 +1922,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 
+ 	boot_tte = (tt_entry_t *)&bootstrap_pagetables;
+ 	boot_ttep = kvtophys((vm_offset_t)boot_tte);
++	{ extern void liuqin_stage(unsigned); liuqin_stage(9); }
+ 
+ #if DEVELOPMENT || DEBUG
+ 	/* Sanity check - assert that BOOTSTRAP_TABLE_SIZE is sufficiently-large to
+@@ -1978,6 +1981,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	 *   the so called physical aperture should be statically mapped
+ 	 */
+ 	init_ptpages(cpu_tte, gVirtBase, dynamic_memory_begin, TRUE, ARM_TTE_TABLE_AP(ARM_TTE_TABLE_AP_USER_NA));
++	{ extern void liuqin_stage(unsigned); liuqin_stage(10); }
+ 
+ #if defined(ARM_LARGE_MEMORY)
+ 	/*
+@@ -2102,6 +2106,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	vm_prelink_edata = segPRELINKDATAB + segSizePRELINKDATA;
+ 
+ 	arm_vm_prot_init(args);
++	{ extern void liuqin_stage(unsigned); liuqin_stage(11); }
+ 
+ 	/*
+ 	 * Initialize the page tables for the low globals:
+@@ -2148,16 +2153,18 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	arm_set_user_tbi();
+ 
+ 	arm_vm_physmap_init(args);
++	{ extern void liuqin_stage(unsigned); liuqin_stage(12); }
+ 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
+ 
+ #if XNU_MONITOR
+ 	ml_enable_monitor();
+ #endif
+ 
+-	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
++	set_mmu_ttb(boot_ttep & TTBR_BADDR_MASK);	/* liuqin: keep the V=P map so the panel stays writable */
+ 
+ 	flush_mmu_tlb();
+ 	kva_active = TRUE;
++	{ extern void liuqin_stage(unsigned); liuqin_stage(13); }
+ 	// global table pointers may need to be different due to physical aperture remapping
+ 	cpu_tte = (tt_entry_t*)(phystokv(cpu_ttep));
+ 	invalid_tte = (tt_entry_t*)(phystokv(invalid_ttep));
+@@ -2209,6 +2216,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 		flush_mmu_tlb();
+ 	}
+ 
++	{ extern void liuqin_stage(unsigned); liuqin_stage(14); }
+ 	sane_size = mem_size - (avail_start - gPhysBase);
+ 	max_mem = mem_size;
+ 	vm_kernel_slid_base = segLOWESTTEXT;
+@@ -2253,7 +2261,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+     }
+ #endif
+ #endif
++	{ extern void liuqin_stage(unsigned); liuqin_stage(15); }
+ 	pmap_bootstrap(dynamic_memory_begin);
++	{ extern void liuqin_stage(unsigned); liuqin_stage(7); }
+ 
+ 	disable_preemption();
+ 
 diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
+index 2056712..78245dc 100644
 --- a/osfmk/arm64/machine_routines.c
 +++ b/osfmk/arm64/machine_routines.c
-@@ -2393,6 +2393,9 @@
+@@ -2393,8 +2393,11 @@ _enable_virtual_timer(void)
  	uint64_t cntvctl = CNTV_CTL_EL0_ENABLE; /* One wants to use 32 bits, but "mrs" prefers it this way */
  
  	__builtin_arm_wsr64("CNTV_CTL_EL0", cntvctl);
@@ -2134,11 +1967,235 @@ diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
 +	 * It only masks a timer this kernel never uses -- the virtual timer set
 +	 * above is the one we run on -- so skip it. */
  }
+ 
+ void
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+index bca4c7c..6227c6c 100644
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -224,6 +224,15 @@ LEXT(ResetHandlerData)
+ 	.align	3
+ 	.globl EXT(_start)
+ LEXT(_start)
++	movz	x26, #0xb818, lsl #16
++	movz	w27, #0xffff
++	movk	w27, #0xff00, lsl #16
++	mov	x28, #0x10000
++LiqinEntryBar:
++	str	w27, [x26], #4
++	subs	x28, x28, #1
++	b.ne	LiqinEntryBar
++	dsb	sy
+ 	b	EXT(start_first_cpu)
+ 
+ 
+@@ -616,6 +625,60 @@ Lkernelcache_base_found:
+ 	/* Setup the KVA bootstrap mapping */
+ 	lsr		x5,  x24, #(ARM_TT_L2_SHIFT)
+ 	create_bootstrap_mapping x14, x15, x5, x3, x2, x9, x10, x11, x12, x13
++	/* liuqin: the V=P map XNU builds does not reach the boot PC on this */
++	/* board (the L2 slot for the entry reads back zero) and the frame- */
++	/* buffer sits outside the load window. Fill both into the V=P table */
++	/* before the MMU goes on, with exactly ARM_TTE_BOOT_BLOCK: 2 MiB */
++	/* blocks, valid|block|AF|SH=outer|AttrIndx=writeback (0x601). */
++	ldr	x9, [x20, BA_PHYS_BASE]
++	ldr	x10, [x20, BA_MEM_SIZE]
++	movz	x11, #0x1000, lsl #16		// at least the 256 MiB owned window
++	cmp	x10, x11
++	csel	x10, x11, x10, lo
++	mov	x17, x9
++	mov	x19, lr
++	bl	LiqinFill
++	movz	x9, #0xb800, lsl #16		// framebuffer, 20 MiB
++	mov	x17, x9
++	mov	x10, #10
++	lsl	x10, x10, #21
++	bl	LiqinFill
++	mov	lr, x19
++	dsb	sy
++	b	LiqinFillDone
++
++	/* x9 = virtual base, x10 = size, x17 = physical cursor, x25 = V=P root */
++LiqinFill:
++	ubfx	x11, x9, #30, #9
++	lsl	x11, x11, #3
++	add	x11, x25, x11
++	ldr	x12, [x11]
++	and	x13, x12, #3
++	cmp	x13, #3
++	b.ne	LiqinFillOut			// no L2 page here: leave it alone
++	ubfx	x12, x12, #12, #36
++	lsl	x12, x12, #12
++	ubfx	x11, x9, #21, #9
++	lsl	x11, x11, #3
++	add	x12, x12, x11			// L2 entry pointer
++	mov	x15, #0x200
++	sub	x15, x15, x11, lsr #3		// entries left in this page
++	lsr	x14, x10, #21
++	cmp	x14, x15
++	csel	x14, x15, x14, hi		// never walk past the page
++	movz	x13, #0x601
++LiqinFillLoop:
++	cbz	x14, LiqinFillOut
++	ubfx	x16, x17, #21, #27
++	lsl	x16, x16, #21
++	orr	x16, x16, x13
++	str	x16, [x12], #8
++	add	x17, x17, #0x200000
++	subs	x14, x14, #1
++	b.ne	LiqinFillLoop
++LiqinFillOut:
++	ret
++LiqinFillDone:
+ 
+ 	b Lbootstrap_tables_ready
+ Lbootstrap_tables_exhausted:
+@@ -646,6 +709,15 @@ Lbootstrap_tables_ready:
+  *	TPIDRRO_EL0 - CPU number
+  */
+ common_start:
++	movz	x26, #0xb81c, lsl #16
++	movz	w27, #0xff00
++	movk	w27, #0xffff, lsl #16
++	mov	x28, #0x10000
++LiqinMapBar:
++	str	w27, [x26], #4
++	subs	x28, x28, #1
++	b.ne	LiqinMapBar
++	dsb	sy
+ 
+ #if HAS_NEX_PG
+ 	mov x19, lr
+@@ -705,6 +777,15 @@ common_start:
+ 	isb
+ 	tlbi	vmalle1
+ 	dsb		ish
++	movz	x26, #0xb820, lsl #16
++	movz	w27, #0xff
++	movk	w27, #0xff00, lsl #16
++	mov	x28, #0x10000
++LiqinMairBar:
++	str	w27, [x26], #4
++	subs	x28, x28, #1
++	b.ne	LiqinMairBar
++	dsb	sy
+ 
+ 
+ #if defined(BCM2837) && (!defined(XNU_NATIVE_ARCH_TIMER) || !XNU_NATIVE_ARCH_TIMER)
+@@ -762,12 +843,72 @@ common_start:
+ #endif /* HAS_APPLE_PAC */
+ 
+ 	// Enable caches, MMU, ROP and JOP
+-	MOV64   x0, SCTLR_EL1_DEFAULT
++	movz	x26, #0xb824, lsl #16
++	movz	w27, #0xff
++	movk	w27, #0xffff, lsl #16
++	mov	x28, #0x10000
++LiqinVbarBar:
++	str	w27, [x26], #4
++	subs	x28, x28, #1
++	b.ne	LiqinVbarBar
++	dsb	sy
++	/* liuqin: read the L2 entry for this PC back and show the verdict. */
++	/* green = valid block that maps this very 2 MiB, red = anything else. */
++LiqinLampHere:
++	adr	x9, LiqinLampHere
++	ubfx	x11, x9, #30, #9
++	lsl	x11, x11, #3
++	add	x11, x25, x11
++	ldr	x12, [x11]
++	and	x13, x12, #3
++	cmp	x13, #3
++	b.ne	LiqinLampBad
++	ubfx	x12, x12, #12, #36
++	lsl	x12, x12, #12
++	ubfx	x13, x9, #21, #9
++	lsl	x13, x13, #3
++	add	x12, x12, x13
++	ldr	x12, [x12]
++	and	x13, x12, #3
++	cmp	x13, #1
++	b.ne	LiqinLampBad
++	movz	x13, #0xffe0, lsl #16
++	movk	x13, #0xffff, lsl #32		// block address field
++	and	x12, x12, x13
++	and	x13, x9, x13
++	cmp	x12, x13
++	b.ne	LiqinLampBad
++	movz	w27, #0xff00
++	movk	w27, #0xff00, lsl #16		// green
++	b	LiqinLampDraw
++LiqinLampBad:
++	movz	w27, #0x0000
++	movk	w27, #0xffff, lsl #16		// red
++LiqinLampDraw:
++	movz	x26, #0xb838, lsl #16
++	mov	x28, #0x10000
++LiqinLampBar:
++	str	w27, [x26], #4
++	subs	x28, x28, #1
++	b.ne	LiqinLampBar
++	dsb	sy
++	mrs	x0, SCTLR_EL1			// liuqin: keep the firmware's bits
++	orr	x0, x0, #1			// (RES1, EOS/IESB, nTWI/nTWE) and
++						// only add M
+ 	MSR_SCTLR_EL1_X0
+ 	isb		sy
++	movz	x26, #0xb828, lsl #16
++	movz	w27, #0xa500
++	movk	w27, #0xffff, lsl #16
++	mov	x28, #0x10000
++LiqinMmuBar:
++	str	w27, [x26], #4
++	subs	x28, x28, #1
++	b.ne	LiqinMmuBar
++	dsb	sy
+ 
+ #if !VMAPPLE
+-	MOV64   x1, SCTLR_EL1_DEFAULT
++	mov	x1, x0				// compare against what we wrote
+ 	cmp		x0, x1
+ 	bne		.
+ #endif /* !VMAPPLE */
+@@ -831,6 +972,15 @@ common_start:
+ #endif
+ 
+ 	// Return to arm_init()
++	movz	x26, #0xb82c, lsl #16
++	movz	w27, #0xffff
++	movk	w27, #0xffff, lsl #16
++	mov	x28, #0x10000
++LiqinRetBar:
++	str	w27, [x26], #4
++	subs	x28, x28, #1
++	b.ne	LiqinRetBar
++	dsb	sy
+ 	ret
+ 
+ Ltrampoline:
+diff --git a/osfmk/console/serial_console.c b/osfmk/console/serial_console.c
+index 715c545..1050c9c 100644
+--- a/osfmk/console/serial_console.c
++++ b/osfmk/console/serial_console.c
+@@ -1,4 +1,5 @@
+ #include <kern/boot_progress.h>
++extern void liuqin_debug_putc(char c);
+ /*
+  * Copyright (c) 2000-2020 Apple, Inc. All rights reserved.
+  *
+@@ -252,6 +253,7 @@ get_cons_ops_index(void)
+ static inline void
+ _cnputc(char c, bool poll)
+ {
++	liuqin_debug_putc(c);
+ 	if (boot_progress_active()) { boot_progress_putc(c); return; }
+ 	bool in_debugger = (kernel_debugger_entry_count > 0);
+ 	const uint32_t idx = get_cons_ops_index();
 diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
-index 8a82186..b324b1e 100755
+index 8a82186..c838cc3 100644
 --- a/osfmk/kern/startup.c
 +++ b/osfmk/kern/startup.c
-@@ -219,10 +219,39 @@
+@@ -219,10 +219,39 @@ extern int serverperfmode;
  
  TUNABLE(startup_debug_t, startup_debug, "startup_debug", 0);
  
@@ -2178,7 +2235,7 @@ index 8a82186..b324b1e 100755
  	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
  	    startup_phase >= STARTUP_SUB_KPRINTF) {
  		kprintf("kernel_bootstrap: %s\n", message);
-@@ -234,6 +247,7 @@
+@@ -234,6 +263,7 @@ static inline void
  kernel_bootstrap_thread_log(const char *message)
  {
  	boot_progress_stage(message);
@@ -2186,3 +2243,21 @@ index 8a82186..b324b1e 100755
  	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
  	    startup_phase >= STARTUP_SUB_KPRINTF) {
  		kprintf("kernel_bootstrap_thread: %s\n", message);
+diff --git a/pexpert/arm/pe_kprintf.c b/pexpert/arm/pe_kprintf.c
+index 3c440ec..934452b 100644
+--- a/pexpert/arm/pe_kprintf.c
++++ b/pexpert/arm/pe_kprintf.c
+@@ -1,4 +1,5 @@
+ #include <kern/boot_progress.h>
++extern void liuqin_debug_putc(char c);
+ /*
+  * Copyright (c) 2000-2019 Apple Inc. All rights reserved.
+  */
+@@ -158,6 +159,7 @@ kprintf(const char *fmt, ...)
+ static void
+ serial_putc_crlf(char c)
+ {
++	liuqin_debug_putc(c);
+ 	if (c == '\n') {
+ 		uart_putc('\r');
+ 	}

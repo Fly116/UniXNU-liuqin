@@ -10,6 +10,7 @@ Vendor bytes stay outside git: the output directory is Binaries/liuqin.
 import argparse
 import hashlib
 import json
+import uuid
 from pathlib import Path
 import struct
 
@@ -151,9 +152,10 @@ def main():
         folder.mkdir(exist_ok=True)
         code = CODES[entry['sha256']]
         (folder / f'{name}.efi').write_bytes(code)
+        guid_text = str(uuid.UUID(bytes_le=bytes.fromhex(entry['guid']))).upper()
         text = ('# Generated from the verified liuqin UEFI; vendor bytes stay outside git.\n'
                 '[Defines]\n  INF_VERSION = 0x0001001B\n'
-                f'  BASE_NAME = {name}\n  FILE_GUID = {entry["guid"]}\n'
+                f'  BASE_NAME = {name}\n  FILE_GUID = {guid_text}\n'
                 f'  MODULE_TYPE = {entry["module_type"]}\n  VERSION_STRING = 1.0\n\n'
                 f'[Binaries.AARCH64]\n  {entry["binary"]}|{name}.efi|*\n')
         if entry['depex'] is not None:

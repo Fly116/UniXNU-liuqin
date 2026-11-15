@@ -1,24 +1,27 @@
 diff --git a/config/IOKit.exports b/config/IOKit.exports
 --- a/config/IOKit.exports
 +++ b/config/IOKit.exports
-@@ -16,4 +16,5 @@
+@@ -15,6 +15,7 @@
+ _IODelay
  _IOExitThread
  _IOFindBSDRoot
 +_liuqin_milestone
  _IOFindNameForValue
  _IOFindValueForName
+ _IOFlushProcessorCache
 diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
 --- a/iokit/bsddev/IOKitBSDInit.cpp
 +++ b/iokit/bsddev/IOKitBSDInit.cpp
-@@ -668,6 +668,7 @@
+@@ -727,6 +727,8 @@
+ 	return true;
+ }
+ 
++extern "C" void liuqin_milestone(const char *, const char *);
++
+ kern_return_t
  IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
      dev_t * root, u_int32_t * oflags )
- {
-+	extern "C" void liuqin_milestone(const char *, const char *);
- 	mach_timespec_t     t;
- 	IOService *         service;
- 	IORegistryEntry *   regEntry;
-@@ -691,19 +692,19 @@
+@@ -754,19 +756,19 @@
  
  	int xchar, dchar;
  
@@ -44,7 +47,7 @@ diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
  	if (mountAttempts++) {
  		IOLog("mount(%d) failed\n", mountAttempts);
  		IOSleep( 5 * 1000 );
-@@ -715,13 +716,16 @@
+@@ -778,13 +780,16 @@
  	}
  	rdBootVar = str.data() + kMaxPathBuf;
  
