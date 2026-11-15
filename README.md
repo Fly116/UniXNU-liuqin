@@ -57,3 +57,10 @@ board.toml 里每个 TODO 都有明确的取值方法和当前状态。
   21H461 storage-bindings 离线推导、userdata Linux 构建、实机里程碑诊断与
   panic 可见化修复等系列迭代。
 - UniXNU 官方与各社区机型仓（尤其 sheng 模板与 mondrian 的 SM8475 实测数据）。
+
+特别感谢：
+
+- 感谢朋友提供 token
+- 感谢喵喵乖乖睡觉
+- 感谢自己狠狠鞭策 AI
+- 感谢小米平板
