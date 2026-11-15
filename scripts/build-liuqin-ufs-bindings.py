@@ -119,7 +119,7 @@ def main():
     command += ['-I', str(ROOT / 'build/storage-abi/include'), '-I', str(ROOT / '.cache/xnu-work/osfmk'),
                 '-Wall', '-Wextra', '-Wno-unused-parameter', '-Wno-deprecated-declarations',
                 '-Wno-c99-designator', '-Wno-reorder-init-list', '-Wno-unnecessary-virtual-specifier']
-    result = subprocess.run(command, capture_output=True, text=True)
+    result = subprocess.run(command, cwd=record['directory'], capture_output=True, text=True)
     if result.returncode:
         fail('reference compile failed:\n' + (result.stdout + result.stderr)[-2500:])
 
