@@ -220,7 +220,10 @@ kernel_args = [
 
 [payload.adt]
 tool = "scripts/make-liuqin-adt.py"   # TODO(liuqin): 未创建，见 docs/porting-plan.md 阶段 3
-chip_id = "207"              # TODO(liuqin): SM8475 的 SMEM 芯片号，不是 SM8550 的 207
+chip_id = "207"              # identity seed only: make-liuqin-adt.py feeds --chip-id/--unique-chip-id
+                             # into /chosen, which XNU hashes into IOPlatformUUID. It is NOT the SMEM
+                             # chip number (earlier TODO said it was); changing it re-rolls the device
+                             # identity. Keep 207 stable unless the identity model changes deliberately.
 owned_memory_size = "0x10000000"   # 256 MiB: 解析下限，先用最小值验证窗口分配
 root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"  # 来自同一 IPSW 的 OS 卷，同 IPSW 时不变
 cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"
