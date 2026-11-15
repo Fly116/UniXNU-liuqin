@@ -115,6 +115,10 @@
   （make 不感知 CFLAGS_ADD）→ 驱动链接进内核但 IOKit 从不 probe，症状 = "K49 无 panic 直接过"。
   基座已加 personality-mode stamp（UniXNU@d883995）；v33b 起生效。
   教训入档：**链接成功 ≠ 驱动会被实例化**，personality 表要单独验证（strings 查 "= NativeUfs;"）。
+- **H11（新坑，实机证实）**：v33c 显示 personality+boot-arg+start 全通，但 **panic() 文字不上屏**
+  ——本机 panic 进 KDB 静默等待（"configuring debugging over serial" 在场，无调试器应答）。
+  结论：**实机诊断报告一律走 liuqin_debug_puts 里程碑控制台，不得依赖 panic 屏**；
+  v33d 的 inspect 已改控制台版。此规则同样适用于未来 root 失败报告（v34 起）。
   `./unixnu build userdata --ipsw <本地> --dry-run` 核成员/大小 → 正式构建
   → 用 apfs.py（copy 自 mondrian）离线核 SHNGROOT 头、GPT、卷 UUID（应=04769D26-…）
   ✅验收：userdata.img 出成+report 三项 sha 全、UUID 匹配 board.toml
