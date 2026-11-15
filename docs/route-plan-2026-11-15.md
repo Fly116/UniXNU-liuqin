@@ -84,7 +84,13 @@
   ICE+0x06C/AUX+0x0A4/RX1+0x0C0/AGG+0x0D4；**SMMU stream 0x60→0xe0**（关键差异，两处）；
   probe 匹配加 `qcom,sm8475-ufshc`；SM8550 mem-PHY 页(0x9e000) SM8475 未实测 → 显式 0 跳过。
   NativeUfs archive 已编译通过 ✓。
-- **H4 内核配置与链接** 🟡 **transport 过，链停在 base 类**：
+- **H4 内核配置与链接** ✅ **v33 链接通过（2026-11-15 22:41）**：
+  ① transport 编译过；② vr_* 依赖经 NATIVE_VERIFIED_BLOCK 环境门清零；
+  ③ IOBlockStorageDevice base 类 = **离线 derive 解决**（scripts/build-liuqin-ufs-bindings.py，
+  从 board pin 的 21H461 缓存 f18b4df8 + refer/IOStorageFamily e45fbe30 + 内核编译记录，
+  推 18 项导入注入 libShengUfs.a；slide 语义查明=整缓存统一 slide，用 raw 缓存 VA，非 mondrian
+  的 auto-slide repack）。新内核 sha 18a2a351，v33 boot.img sha ab159477。
+  旧「链停在 base 类」记录：
   ① `XNU_NATIVE_UFS_VERIFIED` 开关落地（build-arm-driver.py 环境门 + boot defconfig=n，
   official defconfig=y）——=0 模式暴露两处上游从未编译过的错误，fork 已修（Operations::read 计时）；
   ② vr_* 依赖清零 ✓；③ 新缺口：`IOBlockStorageDevice` base 类符号（gMetaClass/vtable/ctor/dtor）
