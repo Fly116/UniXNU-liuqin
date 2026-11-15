@@ -211,19 +211,20 @@ def main():
     if struct.unpack('<I', read(destructor, 4))[0] & 0xfc000000 != 0x14000000:
         fail('storage base destructor layout changed')
 
-    # ---- 6. placement + slide cross-check against the built kernel ----------
+    # ---- 6. placement semantics --------------------------------------------
+    # liuqin's prelink keeps the original cache bytes in place (the emit step
+    # reports "executable bytes unchanged") and slides the WHOLE cache by the
+    # board-pinned value at load time.  Kernel and kexts therefore share one
+    # address space, so the bindings are the raw original-cache VAs; there is
+    # no auto-slide repacking of the prelink bundle as on mondrian.
+    slide = 0
     base = min(s['va'] for s in kernel['segments'] if s['name'].startswith('__PRELINK') and s['size'])
-    component_end = max(s['va'] + s['size'] for s in kernel['segments']
-                        if s['name'] in PRELINK_SEGMENTS and s['size'])
-    need = ARM64_LINK_ADDR - component_end
-    slide = (min(0, need) // SLIDE_STEP) * SLIDE_STEP
-    fixed = base + slide
+    fixed = base
     kernel_json = ROOT.parent / 'kernel/kernel.json'
     if kernel_json.is_file():
         recorded = json.loads(kernel_json.read_text())
-        if recorded.get('slide') != slide:
-            fail(f'derived slide {slide:#x} != kernel.json slide {recorded.get("slide"):#x}')
-        print(f'slide {slide:#x} matches kernel.json (prelink base {base:#x} -> fixed {fixed:#x})')
+        print(f'board slide {recorded.get("slide", 0):#x} applies uniformly at load; '
+              f'bindings use raw cache VAs (prelink base {base:#x})')
 
     # ---- 7. optional live verification from the QEMU snapshot ---------------
     live = False
