@@ -166,13 +166,12 @@ kernel_args = [
   # (base,width,height,stride -- must match the splash geometry above)
   "fb=0xb8000000,1800,2880,7200",
   "debug=0x14e",
-  # v34a: root path on stock Android userdata. startRoot adopts the controller
-  # (hce=1, utrlba left by firmware), reads the LUN0 GPT and the userdata first
-  # block, and reports the SHNGROOT magic check on the console (panic redirect).
-  # Expected: report lines, no publication, boot continues to the mountroot stall.
-  # v34b (after fastboot flash userdata): same args, real windows, APFS, root.
-  "native-ufs-root=1",
-  "native-ufs-diagnostics=1",
+  # v34a: read-only root diagnostic. probe=11 adopts the controller (register
+  # writes only, never to storage), reads the LUN0 GPT, the userdata first block
+  # magic, and each window's own GPT, then reports on the console via lqPanic.
+  # native-ufs-root=1 waits for v34b: it hard-requires pmgr=2 (original AMFI),
+  # i.e. the sheng platform-power chain plus a userdata flash first.
+  "native-ufs-probe=11",
   # print every STARTUP() entry (subsystem, rank, function) before it runs, so
   # the last line on the panel is the function the boot hangs in
   "startup_debug=1",
