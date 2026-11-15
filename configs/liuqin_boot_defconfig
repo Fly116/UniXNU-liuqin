@@ -14,13 +14,15 @@ CONFIG_XNU_ARMCPU=y
 CONFIG_XNU_NATIVE_ARCH_TIMER=y
 CONFIG_XNU_NATIVE_PAN=y
 CONFIG_XNU_DT_PANIC_REGION=y
+# liuqin ADT has no pram node: keep gPanicBase valid with a kernel-owned 128 KiB buffer.
+CONFIG_XNU_LIUQIN_VOLATILE_PANIC_LOG=y
 # The defconfig opts into the [kernel] archives builders of board.toml: the kernel
 # link needs their output (corecrypto closure, ArmDTPlatform, ArmCpu, libpthread).
 CONFIG_XNU_BUILD_ARCHIVES=y
 CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
 CONFIG_XNU_EXTRA_LD_ARCHIVES=""
 
-CONFIG_XNU_NATIVE_UFS=n
+CONFIG_XNU_NATIVE_UFS=y
 CONFIG_XNU_NATIVE_AES=n
 CONFIG_XNU_NATIVE_VIRTIO_BLOCK=n
 CONFIG_XNU_NATIVE_RAM_BLOCK=n
