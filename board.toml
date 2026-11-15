@@ -166,11 +166,13 @@ kernel_args = [
   # (base,width,height,stride -- must match the splash geometry above)
   "fb=0xb8000000,1800,2880,7200",
   "debug=0x14e",
-  # v33 bring-up diagnostic (round-scoped): NativeUfs::start runs inspect() (reads the
-  # SM8475 clock page 0x187000 branches + UFSHCI header, read-only) and prints the
-  # register facts via a deliberate panic screen. Replace with "native-ufs-root=1",
-  # "native-ufs-diagnostics=1" once userdata-root.img is flashed (v34).
-  "native-ufs-probe=2",
+  # v34a: root path on stock Android userdata. startRoot adopts the controller
+  # (hce=1, utrlba left by firmware), reads the LUN0 GPT and the userdata first
+  # block, and reports the SHNGROOT magic check on the console (panic redirect).
+  # Expected: report lines, no publication, boot continues to the mountroot stall.
+  # v34b (after fastboot flash userdata): same args, real windows, APFS, root.
+  "native-ufs-root=1",
+  "native-ufs-diagnostics=1",
   # print every STARTUP() entry (subsystem, rank, function) before it runs, so
   # the last line on the panel is the function the boot hangs in
   "startup_debug=1",
