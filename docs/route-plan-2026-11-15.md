@@ -71,7 +71,40 @@
 
 ## 4. 无机窗口期作业清单（PC 闭环可验收）
 
-- **H1 userdata 镜像（进行中）**：IPSW 6.84GB 下载至 `UniXNU/out/ipsw/` →
+- **H1 userdata 镜像** ✅ **完成（2026-11-15 20:06，Linux 全程无 Mac）**：
+  `out/liuqin/userdata/userdata-root.img` 9,382,658,048 B，SHNGROOT v1，OS 窗口 6,077,580,800 B @0x100000
+  （sha e5634d04…，GPT→APFS→卷 `DawnUpdate21H461.J120J121J207J208OS`，**卷 UUID
+  04769D26-2CA0-4825-B443-E2E5F88300F2 与 board.toml pin 逐字节一致**，apfs.py 校验和 13/13）；
+  SystemOS 3,303,014,400 B @0x16a600000（sha b4908cde… **= [ipsw.sha256] pin**）。
+  刷写命令在 `userdata-root.json`（等机器，属 D 级动作）。IPSW sha256 c84ad24b…（6,835,124,840 B）。
+- **H2 组件落地** ✅：submodule `drivers/ShengUfs` @ catalog pin 99d8bcd，fork 分支
+  `liuqin-sm8475`（提交 2b03381 + 修复 c1b2ce5）；tree 自动出 `drivers/NativeUfs` legacy 别名 ✓。
+- **H3 GccUfs SM8475 移植** ✅（fork 内，均有出处注释）：页 0x187000（mondrian dts 实测，K60
+  2026-11 真机）；分支 GDSCR+0x004/AXI+0x018/AHB+0x020/TX+0x024/RX0+0x028/UNIPRO+0x064/
+  ICE+0x06C/AUX+0x0A4/RX1+0x0C0/AGG+0x0D4；**SMMU stream 0x60→0xe0**（关键差异，两处）；
+  probe 匹配加 `qcom,sm8475-ufshc`；SM8550 mem-PHY 页(0x9e000) SM8475 未实测 → 显式 0 跳过。
+  NativeUfs archive 已编译通过 ✓。
+- **H4 内核配置与链接** 🟡 **transport 过，链停在 base 类**：
+  ① `XNU_NATIVE_UFS_VERIFIED` 开关落地（build-arm-driver.py 环境门 + boot defconfig=n，
+  official defconfig=y）——=0 模式暴露两处上游从未编译过的错误，fork 已修（Operations::read 计时）；
+  ② vr_* 依赖清零 ✓；③ 新缺口：`IOBlockStorageDevice` base 类符号（gMetaClass/vtable/ctor/dtor）
+  不在最小内核链里。官方机制查明 = **bindings 审计链**（见 H9），非 .o 编译而是
+  **地址绑定**（audit 从原始 21H461 缓存取地址→original-bindings.S→force_load）。
+  v33 打包因此暂缓。
+- **H9（新）bindings 审计链 Linux 化** 🟡 输入全部清点完毕，本机可闭环：
+  ① `xcrun` shim 已写（`toolchain/bin/xcrun` → llvm-* + `toolchain/fake-sdk`，
+     TargetConditionals.h 已就位）；② refer/IOStorageFamily @ e45fbe30 ✓；
+  ③ candidate_sha256=51212c58（kernel.json，已内嵌 IOStorageFamily 组件）✓；
+  ④ 快照缺口：需 `probe-darwinboot-xnu.py --kernel out/liuqin/kernel/kernel.macho`
+     在 QEMU 跑 liuqin 候选缓存到 panic，产出
+     `build/darwinboot-storage-native-metadata/gdb-stop.json`（要求 kernel_sha256 匹配、
+     native-4K TCR/SCTLR/TTBR、metaclass 实存 0x90/IOService 0x88）；
+  ⑤ `audit-aes-interface.py` 需 kdk IOCryptoAcceleratorFamily——可从 21H461 缓存用 np 提取，
+     或核实 sheng 是否本就用 iOS 提取件（下一步先跑 ①-④ 再定）；
+  ⑥ 审计过后 archives += `build-arm-driver.py NativeRamBlock` +
+     `build-virtio-mmio-bindings.py --component RamBlock --directory build/ram-block` +
+     `CONFIG_XNU_NATIVE_RAM_BLOCK=y` → libRamBlock.a 带 bindings 进链 → v33 可链。
+- （并行）**v32 刷机包**：等机器，watch 重挂即可
   `./unixnu build userdata --ipsw <本地> --dry-run` 核成员/大小 → 正式构建
   → 用 apfs.py（copy 自 mondrian）离线核 SHNGROOT 头、GPT、卷 UUID（应=04769D26-…）
   ✅验收：userdata.img 出成+report 三项 sha 全、UUID 匹配 board.toml
