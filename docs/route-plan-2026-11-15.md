@@ -175,6 +175,9 @@
   零失败）。无机窗口期两次把半死树留给自己踩，教训入档：改补丁=先跑一次干净重放再睡。
 - **v34c（2026-11-16 17:32）**：H13 修复版，纯 fastboot boot；窗口剧本 A（安卓
   userdata 上验证诊断链）→ B（刷根）见 releases/v34c-NOTES.md。
+- **v34d（2026-11-16 21:22）**：H14 修复版（liuqin_allow_unsealed_root 只读未认证根门 +
+  B:rootauth-unsealed 里程碑）；H15 基座修复后首次全量重放产出内核 ecc3508b；
+  剧本与判读见 releases/v34d-NOTES.md（相对 v34c 只加一段 rootauth 判读）。
 
 ## 4.5 M1 实机寄存器记录（v33e，2026-11-16 00:2x，IMG_6897-6900）
 
