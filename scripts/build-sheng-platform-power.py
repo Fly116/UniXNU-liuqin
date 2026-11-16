@@ -25,7 +25,9 @@ def require(value, message):
         raise SystemExit(message)
 
 
-print(run(['python3', ROOT / 'scripts/audit-amfi-pmgr-contract.py'], text=True), end='')
+kernel_candidate = ROOT.parent / 'kernel/kernel.macho'   # liuqin: the built candidate cache
+print(run(['python3', ROOT / 'scripts/audit-amfi-pmgr-contract.py',
+           '--candidate', str(kernel_candidate)], text=True), end='')
 header = '''// Generated exact storage/slot ABI; private fields stay opaque.
 #pragma once
 #include <IOKit/IOPMGR.h>
@@ -96,8 +98,12 @@ if not reference.exists():
     # Build products are pruned: a later candidate built from the same original kernelcache has the identical original
     # ApplePMGR class and inherited native IOPMGR slots; every slot/pointer check below still runs against it.
     later = sorted((ROOT / 'build/xnu-prelink').glob('native-owner-ufs-cpu-desktop-*-candidate.macho'), key=lambda f: f.stat().st_mtime)
-    require(later, 'No reference candidate available')
-    reference = later[-1]
+    if later:
+        reference = later[-1]
+    else:
+        # liuqin schema-1: the built candidate is the reference (same pinned original cache).
+        reference = kernel_candidate
+    require(reference.exists(), 'No reference candidate available')
 candidate = reference.read_bytes()
 meta = macho(candidate)
 native_names = {n: va for va, names in exports(candidate, meta).items() for n in names}
