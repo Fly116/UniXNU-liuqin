@@ -159,6 +159,20 @@
   每窗口 pub/media）。命令行换掉 sheng-disable-jobs（128B，launchd 阶段再换回）。
   **教训入档：判读表要按"最远可达路径"而不是"最可能失败点"核对一遍代码——
   v34b 的"预期屏幕"其实到不了 ext4 报告那行之后。**
+- **H14（无机窗口期地雷，v34d 排除）**：代码复查 bsd_init.c 挂载后的验证链：iOS 目标
+  `require_rootauth=TRUE` → `VNOP_IOCTL(FSIOC_KERNEL_ROOTAUTH)` 在无密封 restore-image 根上
+  必返错，且未验证构建里 owner_authorized 恒 0 —— 即 **根挂上也会立刻
+  panic("rootvp not authenticated after mounting")**，v34c 的 B 线剧本到不了 launchd。
+  修复：z-z-z-liuqin-development-root-policy.patch（DEVELOPMENT && !SECURE_KERNEL 限定，
+  opt-in boot 门 `liuqin_allow_unsealed_root=1`，只放行**只读**根，照 mondrian
+  pong_allow_unauthenticated_root 的已验证设计；rootauth 错误值照打印、不谎报已认证），
+  里程碑 `B:rootauth-unsealed`（H11 规则：上控制台，不上 panic 屏）。
+- **H15（基座坑，连踩两次）**：build-xnu-4k-baseline.sh 在 stamp 失配时先反打 5 个 late 补丁、
+  再逐补丁「可反打则跳过」——但 liuqin 系列在 osfmk/arm64/start.s 互相重叠，late 补丁的
+  hunk 撑开早补丁的反打上下文后，早补丁既反打不动也正向打不进，构建死在 apply --check，
+  只能手工重置 .cache/xnu-work。**基座修复 UniXNU@21fa272：stamp 失配 = reset --hard 到
+  pinned rev + clean + 按名字序全量重放**（重放序即系列定序序，已在干净树上全量验证 61 补丁
+  零失败）。无机窗口期两次把半死树留给自己踩，教训入档：改补丁=先跑一次干净重放再睡。
 - **v34c（2026-11-16 17:32）**：H13 修复版，纯 fastboot boot；窗口剧本 A（安卓
   userdata 上验证诊断链）→ B（刷根）见 releases/v34c-NOTES.md。
 

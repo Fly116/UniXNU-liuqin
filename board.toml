@@ -210,6 +210,10 @@ kernel_args = [
   # gate (bring-up instrument only). Dropped to pay for it: sheng-disable-jobs=<128B list>
   # (only useful once launchd runs; trade it back in at the login milestone).
   "native-ufs-unauth-root=1",
+  # H14: iOS builds set require_rootauth=TRUE; without this gate the kernel panics
+  # "rootvp not authenticated after mounting" right after a SUCCESSFUL root mount
+  # (z-z-z-liuqin-development-root-policy; read-only root only; mondrian-proven design).
+  "liuqin_allow_unsealed_root=1",
   "boot-ui-focus=PreBoard",
   "boot-ui-focus2=SpringBoard",
   "boot-ui-focus3=backboardd",

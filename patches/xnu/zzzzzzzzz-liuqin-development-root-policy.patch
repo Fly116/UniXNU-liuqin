@@ -1,0 +1,27 @@
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1126,7 +1126,23 @@
+ 				native_owner_root_checkpoint(autherr, owner, device);
+ 			}
+ #endif
+-			if (autherr && !owner_authorized) {
++			int liuqin_development_root = 0;
++#if (DEVELOPMENT || DEBUG) && !SECURE_KERNEL
++			/* liuqin (H14): bring-up policy for the unsealed restore-image root, the
++			 * liuqin analogue of the mondrian pong_allow_unauthenticated_root gate.
++			 * Keeps the APFS rootauth result visible; never reports it as
++			 * authenticated. Opt-in only, read-only roots only; a release kernel
++			 * cannot carry it. */
++			PE_parse_boot_argn("liuqin_allow_unsealed_root", &liuqin_development_root,
++			    sizeof(liuqin_development_root));
++			liuqin_development_root = liuqin_development_root == 1 &&
++			    (vfs_flags(vnode_mount(rootvnode)) & MNT_RDONLY);
++			if (autherr && liuqin_development_root) {
++				printf("LIUQIN DEVELOPMENT: allow unsealed read-only root; APFS rootauth error=%d\n", autherr);
++				liuqin_milestone("B", "rootauth-unsealed");
++			}
++#endif
++			if (autherr && !owner_authorized && !liuqin_development_root) {
+ 				panic("rootvp not authenticated after mounting");
+ 			}
+ #if defined(XNU_OWNER_ROOT_TRUST) && XNU_OWNER_ROOT_TRUST
