@@ -216,6 +216,14 @@ kernel_args = [
   # gate (bring-up instrument only). Dropped to pay for it: sheng-disable-jobs=<128B list>
   # (only useful once launchd runs; trade it back in at the login milestone).
   "native-ufs-unauth-root=1",
+  # H16 (2026-11-16): startRoot refuses window publication while the metaclass name
+  # "IOBlockStorageDevice" is already registered by the prelinked IOStorageFamily --
+  # v35 crashed in OSMetaClass::postModLoad (duplicate branch, freed reserved) right
+  # after K31/K32. Binding audit: native->family imports = 0, but APFS->family = 141
+  # (IOMedia/IOMediaBSDClient), so the family STAYS in roots; root mount goes through
+  # driver-H16B.diff (-DLIUQIN_BLOCK_DIRECT=1, NativeUfsBlock : IOService, pong/zizhan
+  # shape) with this gate kept as the safety fuse.
+
   # H14: iOS builds set require_rootauth=TRUE; without this gate the kernel panics
   # "rootvp not authenticated after mounting" right after a SUCCESSFUL root mount
   # (z-z-z-liuqin-development-root-policy; read-only root only; mondrian-proven design).
