@@ -205,7 +205,11 @@ kernel_args = [
   # requires exactly pmgr=2 for native-ufs-root=1)            # TODO(liuqin): 复用 sheng 的 PMGR 探测，需在 SM8475 上验证或改名
   "armcpu-diagnostics=1",
   "sheng-disable-watchdogd=1",   # TODO(liuqin)
-  "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.iconservices.iconservicesagent",
+  # H13: unverified (NATIVE_VERIFIED_BLOCK=0) builds have no signed volume identities, so
+  # upstream's startRoot never publishes on liuqin; this arg opens the driver-side identity
+  # gate (bring-up instrument only). Dropped to pay for it: sheng-disable-jobs=<128B list>
+  # (only useful once launchd runs; trade it back in at the login milestone).
+  "native-ufs-unauth-root=1",
   "boot-ui-focus=PreBoard",
   "boot-ui-focus2=SpringBoard",
   "boot-ui-focus3=backboardd",

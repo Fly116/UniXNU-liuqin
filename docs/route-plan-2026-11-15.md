@@ -145,6 +145,23 @@
 - **H8 QEMU SIGKILL 支线**：launchd 签名/exec-policy 研究继续（host-only，独立于存储）
 - （并行）**v32 刷机包**：等机器，watch 重挂即可
 
+- **H13（无机窗口期地雷，v34c 排除）**：复查发现 liuqin 的未验证构建
+  （`CONFIG_XNU_NATIVE_UFS_VERIFIED=n`）下 ShengUfs `startRoot` 的 `validate()` **无条件
+  return false**（"Root publication requires owner verification in every build."，fork
+  上游行为）——即使 v34c 之后 adopt/GPT/manifest 全过、userdata 也刷好，root 也**永远
+  发布不出块设备**，白白烧掉一个"刷根窗口"。修复（fork b9c020a，仅未验证编译单元生效）：
+  ① 显式 boot 门 `native-ufs-unauth-root=1`（不带=上游 fail-closed）；
+  ② 媒体等待在 unauth 模式降级为"窗口下出现任意 IOMedia"（依据：21H461 缓存
+  IOStorageFamily 有通用 personality `{IOClass=IOBlockStorageDriver; device-type=Generic;
+  IOProviderClass=IOBlockStorageDevice}`，且 `IOBlockStorageDevice::init` 自带
+  device-type=Generic——已在本机缓存 f18b4df8 二进制里逐字节核实）；
+  ③ startRoot 全程 U: 步进标记（root-bringup/layout/manifest/plan/iostart/prepared +
+  每窗口 pub/media）。命令行换掉 sheng-disable-jobs（128B，launchd 阶段再换回）。
+  **教训入档：判读表要按"最远可达路径"而不是"最可能失败点"核对一遍代码——
+  v34b 的"预期屏幕"其实到不了 ext4 报告那行之后。**
+- **v34c（2026-11-16 17:32）**：H13 修复版，纯 fastboot boot；窗口剧本 A（安卓
+  userdata 上验证诊断链）→ B（刷根）见 releases/v34c-NOTES.md。
+
 ## 4.5 M1 实机寄存器记录（v33e，2026-11-16 00:2x，IMG_6897-6900）
 
 ```
