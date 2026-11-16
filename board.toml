@@ -35,7 +35,8 @@ fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustC
 #   若恢复 stock GPT，userdata 会回到 2758144 (0x2A1600) .. 249179130 (0xEDA2BFA) = 940.02 GiB。
 # 两种布局起点相同，只有结尾不同；按刷写时实际存在的分区填。
 first_lba = 0x2A1600
-last_lba = 0x1AA17FF
+last_lba = 0x1D143FA   # live GPT read by the device itself (v34a probe=11 report:
+                      # userdata first=2a1600 last=1d143fa; the old 0x1AA17FF record was stale)
 lba_bytes = 4096
 windows = [
   { name = "OS", component = "OS" },
@@ -56,6 +57,7 @@ archives = [
   "build-arm-driver.py ArmCpu",
   "build-libpthread-kernel.py",
   "build-arm-driver.py NativeAES",
+  "build-sheng-platform-power.py",
   "build-software-aes-bindings.py --objects-dir build/native-aes",
   "build-arm-driver.py NativeUfs",
   "build-liuqin-ufs-bindings.py",
@@ -171,7 +173,9 @@ kernel_args = [
   # magic, and each window's own GPT, then reports on the console via lqPanic.
   # native-ufs-root=1 waits for v34b: it hard-requires pmgr=2 (original AMFI),
   # i.e. the sheng platform-power chain plus a userdata flash first.
-  "native-ufs-probe=11",
+  "native-ufs-root=1",
+  "native-ufs-diagnostics=1",
+  "pmgr=2",
   # print every STARTUP() entry (subsystem, rank, function) before it runs, so
   # the last line on the panel is the function the boot hangs in
   "startup_debug=1",
@@ -197,7 +201,8 @@ kernel_args = [
   "offline-key-events=1",
   # "native-ufs-root=1",   # stub 内核没有 _sheng_pmgr_run 符号，先关掉这项 AMFI 预检
   # native-ufs-stats-delay=30  (dropped: kernel command line hit the 1000-byte limit; re-add by trading another arg)
-  "sheng-pmgr=2",            # TODO(liuqin): 复用 sheng 的 PMGR 探测，需在 SM8475 上验证或改名
+  # sheng-pmgr=2  superseded: the platform-power provider reads "pmgr" (the payload gate
+  # requires exactly pmgr=2 for native-ufs-root=1)            # TODO(liuqin): 复用 sheng 的 PMGR 探测，需在 SM8475 上验证或改名
   "armcpu-diagnostics=1",
   "sheng-disable-watchdogd=1",   # TODO(liuqin)
   "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.iconservices.iconservicesagent",
