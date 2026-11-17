@@ -1,0 +1,66 @@
+diff --git a/libkern/c++/OSMetaClass.cpp b/libkern/c++/OSMetaClass.cpp
+--- a/libkern/c++/OSMetaClass.cpp
++++ b/libkern/c++/OSMetaClass.cpp
+@@ -87,6 +87,17 @@ static enum {
+ 	kMakingDictionaries = 2
+ } sBootstrapState = kNoDictionaries;
+ 
++extern "C" void liuqin_debug_puts(const char *);   // liuqin (H16-D): milestone console, see bsd/dev/liuqin_debug.c
++
++__attribute__((noinline)) static void
++liuqin_stalled_report(const char *phase, void *handle, unsigned count, void *first, void *second)
++{
++	char line[128];
++	__builtin_snprintf(line, sizeof line,
++	    "M:stalled %s h=%p cnt=%u c0=%p c1=%p\n", phase, handle, count, first, second);
++	liuqin_debug_puts(line);
++}
++
+ static const int      kClassCapacityIncrement = 40;
+ static const int      kKModCapacityIncrement  = 10;
+ static OSDictionary * sAllClassesDict;
+@@ -798,6 +809,13 @@ OSMetaClass::preModLoad(const char * kextIdentifier)
+ 	sStalled->count    = 0;
+ 	sStalled->kextIdentifier = kextIdentifier;
+ 
++	/* liuqin (H16-D): the classes array comes from kalloc_type_tag(Z_WAITOK_ZERO);
++	 * a dirty slot here is what v35/v36c faulted on inside postModLoad's scan.
++	 * Report the fresh buffer so the panel shows whether zero-fill held. */
++	liuqin_stalled_report("pre", sStalled, sStalled->count,
++	    sStalled->classes ? sStalled->classes[0] : NULL,
++	    sStalled->classes ? sStalled->classes[1] : NULL);
++
+ 	// keep sStalledClassesLock locked until postModLoad
+ 
+ 	return sStalled;
+@@ -826,6 +844,13 @@ OSMetaClass::postModLoad(void * loadHandle)
+ 		goto finish;
+ 	}
+ 
++	/* liuqin (H16-D): v35/v36c died inside the first-pass scan below
++	 * (ldr x24,[x24,#0x10] on a 'ffffff'-poisoned slot). Dump the live array
++	 * head right here so the panel records exactly which entries were dirty. */
++	liuqin_stalled_report("post", loadHandle, sStalled->count,
++	    sStalled->classes ? sStalled->classes[0] : NULL,
++	    sStalled->classes && sStalled->count > 1 ? sStalled->classes[1] : NULL);
++
+ 	if (sStalled->result) {
+ 		result = sStalled->result;
+ 	} else {
+@@ -878,6 +903,16 @@ OSMetaClass::postModLoad(void * loadHandle)
+ 			IOLockLock(sAllClassesLock);
+ 			for (i = 0; i < sStalled->count; i++) {
+ 				const OSMetaClass * me = sStalled->classes[i];
++				/* liuqin (H16-D): a non-kernel-text slot pointer means the
++				 * stalled buffer was corrupted; refuse the whole batch instead of
++				 * dereferencing it (the v35/v36c crash shape). */
++				if ((uintptr_t)me < 0xfffffff000000000ULL) {
++					liuqin_stalled_report("dirty!", loadHandle, i,
++					    (void *)me, NULL);
++					result = kOSMetaClassInternal;
++					i--;               /* stop the loop cleanly */
++					break;
++				}
+ 				OSMetaClass * orig = OSDynamicCast(OSMetaClass,
+ 				    sAllClassesDict->getObject((const char *)me->className));
+ 
