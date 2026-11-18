@@ -42,7 +42,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]          # the assembled tree
 DEVICE = Path(os.environ.get('UNIXNU_DEVICE', ROOT))
-sys.path.insert(0, str(ROOT / 'kits' / 'XnuPrelink'))
+# The liuqin-build tree still carries the native prelink kit as kits/NativePrelink;
+# the newer tree renamed it to kits/XnuPrelink. Pick whichever one holds the module.
+_KIT = next((ROOT / 'kits' / _name for _name in ('XnuPrelink', 'NativePrelink')
+             if (ROOT / 'kits' / _name / 'native_prelink.py').is_file()),
+            ROOT / 'kits' / 'NativePrelink')
+sys.path.insert(0, str(_KIT))
 sys.path.insert(0, str(ROOT / 'scripts'))
 import native_prelink as np                          # noqa: E402
 from kernel_target import TRIPLE                     # noqa: E402
