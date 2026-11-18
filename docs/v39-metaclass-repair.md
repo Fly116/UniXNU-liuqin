@@ -1,6 +1,9 @@
 # v39：元类 superClassLink 的受控修复（H16-F）
 
-状态：**主机侧已实现并回归通过；未上机**。  
+状态：**已上机验证（2026-11-18）**：`M:reg pre` 显示链接是正确的家族元类、`meta-ok` 通过、
+`M:stalled scan ok`（本类正常登记），内核进到 `bsd_init` 之后的 `startRoot` 与 UFS bring-up。
+当前阻塞点已不再是元类，而是 `hostBringUp()` 的 DMA 分配（见
+[`boot-round-v39-2026-11-18.md`](boot-round-v39-2026-11-18.md)）。  
 基线：v38（内核 `49247f07`，`M:stalled post … cnt=172` / `M:bad[170] bad-chain n=NativeUfsBlock`）。  
 改动：`patches/driver/liuqin-v39-metaclass-repair.diff`（对 pristine `drivers/ShengUfs/NativeUfs.cpp`）。
 
@@ -82,6 +85,29 @@ U:root-pub-<window>                                                  ← 发布�
 | E3 修复后再次被涂 | 修复前能被检测到，`rearm` 幂等修好 |
 
 当前结果：`ALL SIM ASSERTIONS PASS`（A/B/C/D/E）。
+
+## 构建链实测：`liuqin-build` 分支无法从公开状态复现（2026-11-18）
+
+用 fork（`Fly116/UniXNU-liuqin`）触发 `.github/workflows/macos.yml` 连续 6 轮，每轮都往前走一步，
+最后停在同一个根因上：
+
+| run | 失败点 | 根因 | 处理 |
+|---|---|---|---|
+| 44230597889 | bootstrap 链接 | `scripts/build-boot-progress.py` 不在任何分支 | 关掉 `CONFIG_XNU_BOOT_PROGRESS`（面板输出走 `liuqin_fb_putc`，不受影响） |
+| 44231994493 | defconfig | 行尾注释不被解析器接受（我方引入） | 注释独立成行 |
+| 44232733235 | `line 745: test -f $CRYPTO_ARCHIVE` | `CONFIG_XNU_BUILD_ARCHIVES` 未开，archives 全没跑 | defconfig 加 `=y` |
+| 44233836115 | archive 7 | 设备脚本按新树找 `kits/XnuPrelink`，旧树叫 `kits/NativePrelink`；且缺 `scripts/kernel_target.py` | 两处脚本改为按内容探测路径；补 `kernel_target.py` |
+| 44235213748 | archive 7 审计 | `audit-amfi-pmgr-contract.py` 要 `build/native-prelink/*-candidate.macho` | 审计改为"缺基线则警告"（生成物不变） |
+| 44236975692 | archive 7 自身不变式 | `build-sheng-platform-power.py:106` 自己也要同一个 reference | **不可绕**：这是校验输入 |
+
+**根因**：`build/xnu-prelink/native-owner-ufs-rootauth3-candidate.macho`（以及
+`native-owner-ufs-cpu-desktop-*-candidate.macho`）是上一次 prelink 的产物，只存在于作者本机的
+`build/` 里；公开分支里没有任何途径生成它（prelink 必须在链接之后）。作者仓库里成功的
+`ci-parts`（run 40085476418）已不可访问，其产物分支只有 `kernel.macho`。
+
+**结论**：这条路要么拿到作者的 `build/xnu-prelink/` 基线，要么整体迁到带 Linux 支持的新树
+（`1696108518/UniXNU` 的 `liuqin` 分支）。后者已实测：`./unixnu defconfig liuqin_defconfig -D <本仓库>`
+能正常解析，但 `board.toml` 的 `[kernel.prelink].tool` 仍指向 `kits/NativePrelink`，prelink 步骤需要迁移。
 
 ## 构建链现状（2026-11-18 在本机核实）
 
