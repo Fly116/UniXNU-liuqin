@@ -118,9 +118,8 @@ M:stalled post cnt=1 … M:stalled scan ok …                         ← 本�
 
 内核第一次走过 `PE_lockdown_iokit` → `bsd_init` → `startRoot`，并进入 UFS 控制器 bring-up。
 当前卡点：`hostBringUp()` 里 `IOBufferMemoryDescriptor::inTaskWithOptions` 的分配调用不返回
-（改成最小 1 槽同样挂住，与尺寸无关）。完整复盘见
-[`docs/boot-round-v39-2026-11-18.md`](docs/boot-round-v39-2026-11-18.md)，
-从零复现见 [`docs/linux-bringup-tutorial.md`](docs/linux-bringup-tutorial.md)。
+（改成最小 1 槽同样挂住，与尺寸无关）。**状态、复现步骤、排错表、可测试镜像**都在
+[`docs/v39-linux-bringup.md`](docs/v39-linux-bringup.md)。
 
 **这一轮同时打通了"无 macOS"的构建链**：固件（用官方线刷包里的厂商 UEFI 模块）、XNU 内核、
 prelink、payload、`boot.img` 全部在 x86_64 Linux（WSL2）上产出。为此临时关掉了
