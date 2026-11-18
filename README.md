@@ -21,7 +21,7 @@ Xiaomi Pad 6 Pro / liuqin / SM8475 的 UniXNU 设备仓库，由 UniXNU-sheng �
                                + zzzzzzzzzz-liuqin-metaclass-stalled-diagnostics.patch（H16 系列，见「进度」）
     scripts/                   板级构建/打包/补丁脚本；token-stats.py 复现「AI 用量统计」
     tests/liuqin_usb_host_test.c  调试口逻辑的主机侧测试（gcc，不需要内核）
-    tests/metaclass-simtest/   postModLoad 扫描/gate 行为的主机侧仿真（./run.sh，含场景 D）
+    tests/metaclass-simtest/   postModLoad 扫描/gate 行为的主机侧仿真（./run.sh，场景 A–E）
     tools/capture-liuqin-debug.ps1  主机侧抓取脚本（按 VID/PID+序列号定位 COM，置 DTR）
 
 配套（同级目录）
@@ -102,6 +102,31 @@ M:stalled scan BAD h=0xfffffff568caffe0 cnt=1 c0=0xac c1=0x6
 `preModLoad(g_kernel_kmod_info.name)` → 构造 → `postModLoad(handle)`，加**重入闩**和 `getClassSize()`
 ABI 闸，并在注册前后各打一行 `M:reg` 快照。这样既绕开那 172 项批次，又会在受控时刻把被涂的字段改回正确值。
 
+**v39 实况（2026-11-18，已上机验证）**：`startRoot` 序言里用运行时查到的家族元类把
+`superClassLink` 写回（幂等 + `M:reg pre/prep` 快照 + `getClassSize()` ABI 闸 + 有界链校验），
+并删掉 v36 的假阳性 gate。补丁 `patches/driver/liuqin-v39-metaclass-repair.diff`，判读表见
+[`docs/v39-metaclass-repair.md`](docs/v39-metaclass-repair.md)。
+
+实机证据（2026-11-18，`fastboot boot` 纯内存运行）：
+
+```
+NativeUfs: M:reg pre p=0xfffffff007adb6b0 link=0xfffffff007add1d0   ← 家族元类，不是毒值
+NativeUfs: M:reg pre fixed link=0xfffffff007add1d0
+U:meta-ok                                                          ← ABI 闸 + 链校验通过
+M:stalled post cnt=1 … M:stalled scan ok …                         ← 本类正常登记
+```
+
+内核第一次走过 `PE_lockdown_iokit` → `bsd_init` → `startRoot`，并进入 UFS 控制器 bring-up。
+当前卡点：`hostBringUp()` 里 `IOBufferMemoryDescriptor::inTaskWithOptions` 的分配调用不返回
+（改成最小 1 槽同样挂住，与尺寸无关）。完整复盘见
+[`docs/boot-round-v39-2026-11-18.md`](docs/boot-round-v39-2026-11-18.md)，
+从零复现见 [`docs/linux-bringup-tutorial.md`](docs/linux-bringup-tutorial.md)。
+
+**这一轮同时打通了"无 macOS"的构建链**：固件（用官方线刷包里的厂商 UEFI 模块）、XNU 内核、
+prelink、payload、`boot.img` 全部在 x86_64 Linux（WSL2）上产出。为此临时关掉了
+owner/verified-root、AES、Adreno、legacy display、RamBlock、VirtIO 等依赖作者本机归档的功能，
+与 v38 配置不等价，明细在两份文档里。
+
 诊断手段：面板里程碑控制台（`K`/`B`/`U`/`I`/`M:` 前缀）+ 1 MiB 环形缓冲 + USB 调试口。
 逐轮改动、照片判读与被证伪的假设都固化在 **[`docs/boot-rounds-v35-v38.md`](docs/boot-rounds-v35-v38.md)**；
 主机侧回归 `tests/metaclass-simtest/run.sh`（场景 A/B/C + **v38 新增的 D：复现 v37 的
@@ -126,6 +151,7 @@ ABI 闸，并在注册前后各打一行 `M:reg` 快照。这样既绕开那 172
 特别感谢：
 
 - 感谢朋友 **@dfvx** 提供 token
+- 感谢 **@Fly116** 提供设备、线刷包，并完成 2026-11-18 这一轮的全部实机验证
 - 感谢喵喵乖乖睡觉
 - 感谢自己狠狠鞭策 AI
 - 感谢小米平板
