@@ -28,7 +28,11 @@ CONFIG_XNU_LIUQIN_VOLATILE_PANIC_LOG=y
 CONFIG_XNU_ZONE_PGZ_ALIGNMENT_PROBE=y
 CONFIG_XNU_NATIVE_ARCH_TIMER=y
 CONFIG_XNU_NATIVE_PAN=y
-CONFIG_XNU_BOOT_PROGRESS=n   # liuqin-build lost scripts/build-boot-progress.py; panel lines use liuqin_fb_putc()
+# The liuqin-build tree has no scripts/build-boot-progress.py or libBootProgress.a, so
+# XNU_BOOT_PROGRESS=1 dies in the bootstrap pass. The K/B/U/I/M panel lines are
+# unaffected: liuqin_debug_puts() writes through liuqin_fb_putc(), which binds the
+# framebuffer from the fb boot argument itself.
+CONFIG_XNU_BOOT_PROGRESS=n
 CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y
 # TODO(liuqin): sheng 的 Adreno 研究针对 A740，liuqin 是 A730
 CONFIG_XNU_NATIVE_ADRENO=y
