@@ -1,0 +1,56 @@
+== submodules /Users/runner/work/UniXNU-liuqin/UniXNU-liuqin
+== submodules /Users/runner/work/UniXNU-liuqin/UniXNU-liuqin/device
+== tree /Users/runner/work/UniXNU-liuqin/UniXNU-liuqin/out/liuqin/tree
+== kernel: XNU
+== kernel: bootstrap pass for the compile records
++ bash /Users/runner/work/UniXNU-liuqin/UniXNU-liuqin/out/liuqin/tree/scripts/build-xnu-4k-baseline.sh
+      _bsd_autoconf in bsd_init.o
+  "_native_legacy_display_probe", referenced from:
+      _bsd_init in bsd_init.o
+      _native_mobile_graphics_client_probe in IOUserClient.cpo
+  "_native_ram_block_gpu_addon", referenced from:
+      _native_gpu_addon_prepare in kern_exec.o
+      _native_gpu_addon_prepare in kern_exec.o
+  "_native_ram_block_volume_seed", referenced from:
+      _load_init_program in kern_exec.o
+  "_native_verified_block_manifest_sha384", referenced from:
+      _native_owner_publish_boot_manifest in IOKitBSDInit.cpo
+      _native_owner_publish_boot_manifest in IOKitBSDInit.cpo
+  "_native_verified_block_root_authorized", referenced from:
+      _bsd_init in bsd_init.o
+      _load_init_program in kern_exec.o
+      _load_init_program in kern_exec.o
+      _load_init_program in kern_exec.o
+  "_native_verified_block_volume_device", referenced from:
+      _load_init_program in kern_exec.o
+  "_native_verified_root_probe", referenced from:
+      _bsd_init in bsd_init.o
+  "_sheng_pmgr_run", referenced from:
+      _bsd_init in bsd_init.o
+ld: symbol(s) not found for architecture arm64
+clang++: error: linker command failed with exit code 1 (use -v to see invocation)
+make[3]: *** [/Users/runner/work/UniXNU-liuqin/UniXNU-liuqin/out/liuqin/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837//mach.development.bcm2837.unstripped.noctf] Error 1
+make[2]: *** [build_all] Error 2
+make[1]: *** [build_all_bootstrap_DEVELOPMENT^ARM64^BCM2837] Error 2
+make: *** [build] Error 2
+build-xnu-4k-baseline.sh: line 793: make -C .cache/xnu-work "${XNU_BUILD_TARGET:-build}" SDKROOT="${XNU_SDKROOT:-iphoneos}" ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=BCM2837 KERNEL_CONFIGS=DEVELOPMENT ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=arm64 LARGE_MEMORY_DEFINE=-UARM_LARGE_MEMORY ARM64_LINK_ADDR=0xfffffff007004000 ARM64_PLKSEG_ADDR=0xfffffff004004000 DEPLOYMENT_TARGET_FLAGS="-miphoneos-version-min=17.0 -DXNU_TARGET_OS_IOS" DEPLOYMENT_LINKER_FLAGS="-Wl,-ios_version_min,17.0" RC_DARWIN_KERNEL_VERSION="$XNU_DARWIN" RC_ProjectSourceVersion="$XNU_VERSION" BUILD_LTO=0 BOUND_CHECKS=0 BUILD_WERROR="${XNU_BUILD_WERROR:-0}" MAKEJOBS=-j"${JOBS:-4}" CFLAGS_EXTRA="$EXTRA_CFLAGS" "${EXTRA_MAKE_ARGS[@]}" OBJROOT="$ROOT/build/xnu/ios-obj" SYMROOT="$ROOT/build/xnu/ios-sym" DSTROOT="$ROOT/build/xnu/ios-dst" failed
+== kernel: prepare storage headers
++ python3 /Users/runner/work/UniXNU-liuqin/UniXNU-liuqin/out/liuqin/tree/scripts/prepare-storage-headers.py
+== kernel: archive 1/10: build-corecrypto-14.py
++ python3 /Users/runner/work/UniXNU-liuqin/UniXNU-liuqin/out/liuqin/tree/scripts/build-corecrypto-14.py
+== kernel: archive 2/10: build-corecrypto-14.py --namespace
++ python3 /Users/runner/work/UniXNU-liuqin/UniXNU-liuqin/out/liuqin/tree/scripts/build-corecrypto-14.py --namespace
+== kernel: archive 3/10: build-arm-driver.py ArmDTPlatform
++ python3 /Users/runner/work/UniXNU-liuqin/UniXNU-liuqin/out/liuqin/tree/scripts/build-arm-driver.py ArmDTPlatform
+== kernel: archive 4/10: build-arm-driver.py ArmCpu
++ python3 /Users/runner/work/UniXNU-liuqin/UniXNU-liuqin/out/liuqin/tree/scripts/build-arm-driver.py ArmCpu
+== kernel: archive 5/10: build-libpthread-kernel.py
++ python3 /Users/runner/work/UniXNU-liuqin/UniXNU-liuqin/out/liuqin/tree/scripts/build-libpthread-kernel.py
+== kernel: archive 6/10: build-arm-driver.py NativeAES
++ python3 /Users/runner/work/UniXNU-liuqin/UniXNU-liuqin/out/liuqin/tree/scripts/build-arm-driver.py NativeAES
+== kernel: archive 7/10: build-sheng-platform-power.py
++ python3 /Users/runner/work/UniXNU-liuqin/UniXNU-liuqin/out/liuqin/tree/scripts/build-sheng-platform-power.py
+No reference candidate available
+build-sheng-platform-power: AMFI/PMGR audit unavailable (no native prelink candidate in this tree); generated ABI unchanged
+No reference candidate available
+unixnu: python3 failed (1); full log: /Users/runner/work/UniXNU-liuqin/UniXNU-liuqin/out/liuqin/logs/archive-07-build-sheng-platform-power.log
