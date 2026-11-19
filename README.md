@@ -15,12 +15,46 @@
 | 1 | 固件启动 → UniXNU 菜单 → payload 卷挂载 | ✅ 实机 |
 | 2 | 内核启动 → `bsd_init` → `startRoot` | ✅ 实机 |
 | 3 | v39 元类修复（H16-F） | ✅ 实机通过 |
-| 4 | **UFS 控制器初始化 + 链路启动 + LUN 就绪** | ✅ **实机打通（v40）** |
-| 5 | **读 userdata GPT / 解析根布局** | ✅ **实机打通（v40）** |
-| 6 | iOS 根卷挂载（T1） | ⛔ 需要 iOS userdata |
-| 7 | `launchd` / 桌面（T2） | ⛔ 未开始 |
+| 4 | UFS 控制器初始化 + 链路启动 + LUN 就绪 | ✅ 实机打通（v40） |
+| 5 | 读 GPT / 解析根布局 | ✅ 实机打通（v40） |
+| 6 | **设备分区改造：userdata 94 GiB + 新增 `unixnu` 11.79 GiB** | ✅ **实机完成（v41）** |
+| 7 | **iOS 根镜像写入 `unixnu`（8.74 GiB）并被内核接受** | ✅ **`root-manifest-ok` / `root-plan-ok` / `root-iostart-ok`** |
+| 8 | 发布窗口块设备（root-io 阶段） | ⚠️ 卡在 `new NativeUfsBlock`（v41 当前卡点） |
+| 9 | APFS 根卷挂载（T1）→ `launchd` / 桌面（T2） | ⛔ 未开始 |
 
-实机证据（`fastboot boot`，2026-11-19 最后一轮）：
+### v41 是怎么做到的（2026-11-19）
+
+iOS 根镜像（SHNGROOT 容器，OS + SystemOS 两个窗口，共 8,738 MiB）需要一块**内核能裸读写**的存储，
+而 Android 的 `/data` 在 f2fs + metadata 加密（dm-default-key）之上，内核的裸读拿不到明文，
+所以必须让镜像落在一块独立分区里。设备是 128 GB，磁盘原已排满，于是做了：
+
+1. 完整备份 GPT（主/备两份，CRC 校验通过）与 `/sdcard`（5.42 GB，tar 拉到 PC）；
+2. 用脚本重写 **primary GPT**：`userdata` 从 105.79 GiB 缩到 **94 GiB**，尾部新增 **`unixnu`**（11.79 GiB）；
+3. `fastboot erase userdata metadata` → Android 重格为 94 GiB（应用数据清空，文件已备份）；
+4. 用 `unixnu userdata` 从 iPad7,1 17.7.11 (21H461) IPSW 构建根镜像；
+5. 转 sparse 后用 `fastboot flash unixnu` 写入（11 段，228 s）；
+6. 内核加 `native-ufs-root-partition=unixnu`，实机读到：
+   `root-manifest-ok` → `root-plan-ok` → `root-iostart-ok`。
+
+> 保数据缩容（f2fs 原地 shrink）试过两版：Android 13 的 `/data` 有大量 bind mount，
+> 卸载时触发 `reboot,vold-failed` 保护，已放弃并改用上述"备份 + 重格"方案。
+
+### 当前卡点（v41）
+
+```
+U90:root-iostart-ok
+NativeUfs: M:reg prep ...
+U91:prep-alloc          ← OSTypeAlloc(NativeUfsBlock) 不返回
+U92:prep-canary         ← 对照：OSTypeAlloc(OSData)
+U93:prep-canary-ok      ← 普通 IOKit 对象分配正常
+U94:prep-new            ← new NativeUfsBlock 卡住
+```
+
+结论：IOKit 分配上下文正常，卡在**我们自己这个类**的实例分配/构造。
+这个类是通过"强制登记 + 修复 `superClassLink`"活下来的非常规元类，
+下一步要在构造函数/operator new 层面继续拆分（或改用其它发布方式）。
+
+### 早期实机证据（v40 储存链路）
 
 ```
 NativeUfs: M:reg pre p=0xfffffff007adb6b0 link=0xfffffff007add1d0   ← 家族元类，不是毒值
@@ -29,21 +63,17 @@ U:72:h:pre-used                                                    ← STARTUP �
 U:80:h:stopq-ok → U:81:h:NOP OUT → U:83:h:nop-ok                   ← UniPro 链路起来了
 U:84:h:power mode query → U:85:h:LUN ready                          ← 设备应答
 U:86:root-bring-up-ok → U:87:root-layout-ok                        ← READ(10) 读回 GPT，布局解析成功
-UFS BOOT FAILURE: root manifest rejected                           ← 预期：设备上还没有 iOS 根镜像
 ```
-
-诊断行同时给出控制器状态（`op=28` 即 READ(10)、`ocs=00`），说明**块设备读写路径本身是通的**，
-只差一份合法的 iOS 根清单。
 
 ---
 
 ## 二、快速开始（测试已有镜像）
 
-从 [Releases](https://github.com/Fly116/UniXNU-liuqin/releases) 下载最新 `boot-v40-*.img`：
+从 [Releases](https://github.com/Fly116/UniXNU-liuqin/releases) 下载最新镜像（v41 需要设备已完成分区改造）：
 
 ```bash
 adb reboot bootloader
-fastboot boot boot-v40-prealloc.img
+fastboot boot boot-v41-unixnu.img
 ```
 
 菜单 15 秒后自动启动 `xnu`，屏幕会一路走到
