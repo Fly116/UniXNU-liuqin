@@ -44,15 +44,38 @@ iOS 根镜像（SHNGROOT 容器，OS + SystemOS 两个窗口，共 8,738 MiB）�
 ```
 U90:root-iostart-ok
 NativeUfs: M:reg prep ...
-U91:prep-alloc          ← OSTypeAlloc(NativeUfsBlock) 不返回
-U92:prep-canary         ← 对照：OSTypeAlloc(OSData)
-U93:prep-canary-ok      ← 普通 IOKit 对象分配正常
-U94:prep-new            ← new NativeUfsBlock 卡住
+U91:prep-alloc          ← OSTypeAlloc / new NativeUfsBlock
+U92:prep-canary
+U93:prep-canary-ok      ← 对照：普通 IOKit 对象分配正常
+U94:prep-new            ← 卡住
 ```
 
-结论：IOKit 分配上下文正常，卡在**我们自己这个类**的实例分配/构造。
+**里程碑落盘通道（v41 新增）**：内核把每个根发布步骤写进 `unixnu` 分区
+第 2,400,000 块（镜像只占 2,290,688 块，尾部空闲）。卡死重启后，主机用 root
+`dd` 读回即可知道最后一步——不依赖拍照：
+
+```bash
+su -c 'dd if=/dev/block/by-name/unixnu of=/data/local/tmp/j.bin bs=4096 skip=2400000 count=1'
+# j.bin: magic "LQJ1" | code | mach_absolute_time
+```
+
+已确认的定位结果：
+
+| code | 含义 |
+|---|---|
+| 30 | 进入 `new NativeUfsBlock` 之前 |
+| 31 | `NativeUfsBlock::operator new` 成功返回（类型化分配器正常） |
+| 40 | 构造函数成功（尚未到达） |
+
+即：**类型化 `operator new` 正常，卡在构造函数链**。进一步用
+`patches/xnu/zzzzzzzzzzz-liuqin-ctor-trace.patch` 给
+`OSMetaClass::instanceConstructed()` 加了深度追踪（反汇编确认已编入内核并调用
+`lq_journal_trace`），但日志仍停在 31 → 要么基类构造函数在到达
+`instanceConstructed` 之前就阻塞，要么日志钩子本身的 UFS 写入在构造上下文中不能完成。
+下一步加一个控制台标记（`IOLog`）区分这两种情况。
+
 这个类是通过"强制登记 + 修复 `superClassLink`"活下来的非常规元类，
-下一步要在构造函数/operator new 层面继续拆分（或改用其它发布方式）。
+问题很可能出在基类构造器对元类状态的隐含依赖上。
 
 ### 早期实机证据（v40 储存链路）
 
