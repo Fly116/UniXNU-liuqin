@@ -34,6 +34,11 @@ zizhan 的 `board.toml` 只有 92 行，几乎是纯声明：
 | sm8475 SoC 支持 | `Chengdong-Yu/UniXNU-pong` @ `f62243e`，路径 `migration/format2/soc-seed` |
 | PongPlatform24 组件 | 同一 commit |
 
+补充（已验证）：**`kits/PongPlatform24/` 这个目录并不存在**。仓库用
+`scripts/migrate-pong-format2.py:64` 把 kit 项 override 成本仓库根目录（`CLAUDE.md:78`），
+所以 "PongPlatform24" 实际就是 zizhan 自己的 `drivers/`。这条对我们是好消息：
+要复用的东西都在一个仓库里。
+
 **重要风险（已验证）**：`api.github.com/repos/Chengdong-Yu/UniXNU-pong` 现在返回 **404**。
 好在该 repo 已经把 `migration/format2/soc-seed` 和 `drivers/*` 都 vendor 进了 zizhan 本体，
 `kits/` 里也有 `NativePrelink`，所以 **fork zizhan 是自洽的**，不依赖那个已消失的 repo。
@@ -63,6 +68,20 @@ Chengdong-Yu 名下 11-11 之后拆出了一批单组件仓库（`pong-ufs`、`p
    **立即发 matched 通知**。修之前约 3/4 的启动挂不上根：APFS 探测持锁等 `IOBSD`，
    与 `IOResources` 配置形成环（g28 的等待线程 dump 定位）。修之后 g36–g39 **4/4** 挂上。
    → 这条几乎肯定也适用于我们（我们在 `bsd_init` 之后才发布，`IOBSD` 正是那时发布的）。
+6. **userdata 几何是硬编码的**：`PongUfsTransport.cpp:48-54` 里
+   `kPongUserdataFirst4k=0x2dfa00` / `kPongUserdataLast4k=0x76753fa`，并与 GPT 实测强比对，
+   不符就直接 `transportFailure("Pong userdata geometry changed")`。
+   → 换到 liuqin 必须换成我们自己的值（我们的 userdata 起止 LBA 是已知的）。
+7. **他们认为"异步匹配彻底不执行"的机理是：某个 kext 的 `start()` 在配置线程里永远不返回。**
+   `porting.toml` 与 `docs/progress/2026-10-30-root-and-autoloop.md:173-181` 记录：
+   AppleImage4 在 `/defaults` 上等 `IOAESAccelerator`，拿不到就等/panic；配置线程只要有一个
+   `start()` 卡住，后面所有排队 job 都不会再被处理。
+   → **这可能就是我们的情况**：v58 观测到"job 排队、`st` 从不变化"，与"配置线程被某个
+   `start()` 卡死"完全吻合。我们有 `IOSleep()` 永不返回的已知平台问题，任何用定时等待的
+   `start()` 都会永久占住配置线程。
+   他们为此准备了现成工具：补丁 0005 的 `pong_dump_waiting_threads()`
+   （`PongUfsTransport.cpp:222,239-243`），根卷 25 s/45 s 未挂就打印所有等待线程的事件与栈。
+   **这个可以直接搬到我们的树上用。**
 
 ## 3. liuqin 必须自己做的部分
 
@@ -117,15 +136,27 @@ Chengdong-Yu 名下 11-11 之后拆出了一批单组件仓库（`pong-ufs`、`p
 
 你的机器：MacBook Pro 2017 / **macOS 13 Ventura** / 已装 Xcode。
 
+**先说好消息（已验证）**：**Intel Mac 是这条流水线的原生目标，不是二等公民。**
+`scripts/build-darwinboot24-macos.py:2` 的 docstring 原文就是 "Compile the Darwin 24 loader **on the Intel Mac**"；
+多个 kext 脚本显式接受 `x86_64`，报错文案还写着 "uses the Intel macOS toolchain"；
+他们的云端内核 CI 也跑在 Intel 上（`runs-on: macos-15-intel`）。
+
+**会挡住你的是版本和路径，不是架构**：
+
 | 障碍 | 具体情况 | 判断 |
 |---|---|---|
-| Xcode 版本 | Ventura 官方上限是 **Xcode 15.2（iOS 17.2 SDK）**；zizhan 的 22H374 需要 **iOS 18 SDK / Xcode 16**，而那要求 macOS 14.5+ | **直接跑 18.7.10 这条线不行**（已验证的版本约束） |
-| 只做 17.7.11 | 若要 iOS 17.7 SDK，Xcode 16.0 起步，同样要 macOS 14.5+ | 大概率也要更新系统（**未验证**是否能凑合） |
-| Homebrew `llvm@18` | Ventura 是否还有该 formula 的瓶装（bottle）**未验证**；没有瓶装就要源码编译，几小时 | 待确认 |
-| 替代方案 | ① 用 OpenCore Legacy Patcher 把 MBP2017 升到 Sonoma/Sequoia；② 借一台 M 系 Mac；③ 直接用仓库自带的 GitHub Actions（`macos-15-intel`） | 三条都可行 |
+| **Xcode 的 SDK** | 构建目标写死 `arm64-apple-ios18.0`、`-miphoneos-version-min=18.0`（`build-xnu-ipados18.sh:1120-1121`、`build-ipados18.py:930`），实测用 `iPhoneOS26.5.sdk`；Ventura 官方上限 Xcode 15.2 只有 iOS 17.2 SDK | **这是最高风险项**：Xcode 15 大概率编不动 18.0 目标（未验证） |
+| Homebrew 前缀 | 全部脚本硬编码 `/opt/homebrew`（Apple Silicon 路径），Intel 是 `/usr/local`（`ci-env.sh:9-12` 等十余处） | 可改，但要让每一处都对 |
+| `llvm@18` 瓶装 | 他们自己的 CI 注释写着 Intel runner 上 cmake/llvm **没有 bottle**，只能吃预装 keg | Ventura x86_64 是否有 bottle **未验证**；没有就要源码编 LLVM（数小时） |
+| `aea`（解密 IPSW 组件用） | 只在 macOS 15 上验证过 | Ventura 上是否可用 **未验证** |
 
-**我的建议**：先用**仓库自带的 GitHub Actions** 跑通 zizhan 原版构建（证明它在你能力范围内可复现），
-再决定要不要为了它升级你的 Mac。你现有的 Linux 流水线在我们这条线上依然是最快的迭代工具。
+**结论**：你的 MBP2017 拿来跑**固件 + DarwinBoot24 + pinalloc + 根镜像写入**没问题；
+跑**内核和 userland 预链接**大概率会被 Xcode 15 的 iOS 17 SDK 挡住。
+
+**三条可选路**：
+① 先用仓库自带的 GitHub Actions（`macos-15-intel`）把 zizhan 原版跑通，证明可复现；
+② 用 OpenCore Legacy Patcher 把 MBP2017 升到 Sonoma/Sequoia + Xcode 16.4；
+③ 内核/userland 放云端或别的机器，Mac 只做固件和上机 —— 你现有的 Linux 流水线仍是最快的迭代工具。
 
 ## 7. 下一步（不需要设备）
 
