@@ -3,7 +3,7 @@
 把 iOS 17 的 XNU 内核移植到小米平板 6 Pro 的工程记录。
 **所有测试都只 `fastboot boot`（纯内存），不写设备任何分区。**
 
-## 当前状态（2026-11-18）
+## 当前状态（2026-11-19）
 
 | 项 | 状态 |
 |---|---|
@@ -11,20 +11,38 @@
 | 固件启动 → UniXNU 菜单 → payload 卷挂载 | ✅ 实机 |
 | 内核跑到 `bsd_init` → `startRoot` | ✅ 实机 |
 | v39 元类修复（H16-F） | ✅ **实机通过** |
-| UFS 控制器 bring-up | ⚠️ 卡在 DMA 分配 |
+| UFS 控制器初始化（DMA / 槽位 / SMMU / 停队列） | ✅ **实机打通** |
+| UFS 链路启动（UniPro NOP OUT） | ⚠️ 当前卡点 |
 | iOS 根卷 / 用户态 | ⛔ 未开始 |
 
 实机证据（`fastboot boot`）：
 
 ```
 NativeUfs: M:reg pre p=0xfffffff007adb6b0 link=0xfffffff007add1d0   ← 家族元类，不是毒值
-NativeUfs: M:reg pre fixed link=0xfffffff007add1d0
 U:meta-ok                                                          ← ABI 闸 + 链校验通过
 M:stalled post cnt=1 … M:stalled scan ok …                         ← 本类正常登记
+…
+U:78:cpm-page → U:79:h:kmem-ok → U:80:h:dma-done                   ← DMA 拿到物理连续内存
+U:81:h:geom → U:82:h:slots → U:83:h:civac
+U:84:h:SMMU and request list → U:85:h:stopq → U:86:h:stopq-ok
+U:87:h:NOP OUT                                                     ← 当前终点：链路启动
 ```
 
-当前卡点：`hostBringUp()` 里 `IOBufferMemoryDescriptor::inTaskWithOptions(...)` 调用不返回；
-改成最小 1 槽同样挂住，与尺寸/连续性无关。
+### 2026-11-19 的两个根因发现
+
+1. **`IOMapper` 从未被初始化**：`IOMapper::gSystem` 初始是 `kUnknown`（带等待位），
+   只有 `IOMapper::setMapperRequired()` 会把它推到 `kNoMapper`/`kHasMapper`，
+   而苹果平台的 platform expert 才会调用它。非苹果平台没人调，
+   于是任何 `IOBufferMemoryDescriptor` 创建都可能在 `waitForSystemMapper()` 里永久睡眠。
+   → 驱动里显式把 `gSystem` 置 0 绕过。
+
+2. **wired（不可分页）描述符的 `prepare()` 挂死**：定位到
+   `kIOMemoryAutoPrepare → prepare() → wireVirtual()`。pageable 描述符正常，wired 挂。
+   → 不再走 IOKit 描述符，直接 `kmem_alloc_contig(kernel_map, …)` 取物理连续页，
+   用 `ml_vtophys()` 取物理地址（`h:kmem-ok` 即此路径）。
+
+当前卡点：`hostNop()` 发出的 UIC NOP OUT 命令不返回（其 200 ms 超时没有生效），
+下一步给 `hostSubmit`/`hostAwait` 的等待循环打点。
 
 ## 快速开始（测试已有镜像）
 
@@ -37,8 +55,9 @@ fastboot boot boot-v39-2026-11-18.img
 ```
 
 菜单 15 秒后自动启动 `xnu`，屏幕依次出现 `K49:PE_init_iokit` → `B68:bsd_init` →
-`U:60:start-root` → `U:61:r0-enter` → `M:reg pre …` → `U:66:meta-ok` → `U:67:r4-host` →
-`U:68:h:controller map` → `U:69:h:DMA allocation` → `U:72:h:alloc1`（当前终点）。
+`U:60:start-root` → `U:61:r0-enter` → `M:reg pre …` → `U:66:meta-ok` →
+`U:68:h:controller map` → `U:79:h:kmem-ok` → `U:87:h:NOP OUT`（2026-11-18 的镜像会停在
+`h:alloc1`，两者都是有效的起点）。
 
 从零构建见下文[「v39：Linux 构建链与实机状态」](#v39linux-构建链与实机状态2026-11-18)。
 
