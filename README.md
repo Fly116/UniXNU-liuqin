@@ -60,7 +60,7 @@
 - 块设备发布：约 85–90%
 - APFS 根卷挂载：约 10%
 - 用户态：约 0%
-- 图形界面：0%（且受 Adreno/Metal 限制，不建议作为目标）
+- 图形界面：0%
 
 综合约 **45–50%**（以"能看到某种界面/用户态输出"为目标）。
 
@@ -353,47 +353,10 @@ board.toml                   板级描述与内核启动参数
 
 ---
 
-## 十三、如何把本仓库登记到 unixnu.com
 
-上游设备页 <https://unixnu.com/zh/devices/models/liuqin> 是一张「仓库 → 设备页面」的表格，
-目前列了三个 liuqin 仓库。要把本仓库加进去，需要给
-[UniXNU/UniXNU](https://github.com/UniXNU/UniXNU) 提 PR（页面右下角有"在 GitHub 上编辑此页"直达链接）。
-
-**最小改动（两步）**：
-
-1. 在两个语言版本的型号页表格里各加一行：
-
-   - `docs/zh/devices/models/liuqin.md`：
-
-     ```markdown
-     | [Fly116/UniXNU-liuqin](https://github.com/Fly116/UniXNU-liuqin) | [Xiaomi Pad 6 Pro（Fly116）](/zh/devices/liuqin-fly116) | 适配记录 | SM8475 |
-     ```
-
-   - `docs/devices/models/liuqin.md`：
-
-     ```markdown
-     | [Fly116/UniXNU-liuqin](https://github.com/Fly116/UniXNU-liuqin) | [Xiaomi Pad 6 Pro \(Fly116\)](/devices/liuqin-fly116) | Porting record | SM8475 |
-     ```
-
-2. 新建两个设备页（内容可简可详，最简只要仓库链接 + 一句话，参考 `docs/zh/devices/liuqin-hhyygg2009.md`）：
-
-   - `docs/zh/devices/liuqin-fly116.md`
-   - `docs/devices/liuqin-fly116.md`
-
-   建议写清楚：SM8475、iPad7,1 17.7.11 (21H461) 目标、当前进展（存储链路打通 / 未挂载根卷）、
-   以及"**尚不能启动 iOS 用户界面**"这条状态，避免误导。
-
-**更规范的做法（可选）**：在上游允许时，于本仓库根放一份 `porting.toml`（参考 document97 的仓库），
-站点会根据设备记录**自动生成**设备页，省去手写页面。
-
-**注意**：PR 描述里请如实标注当前阶段（未挂载根卷、无用户态、无界面），并附上 §4 的已知卡点；
-上游通常更愿意收录记录完整、状态诚实的仓库。
-
----
-
-## 十四、免责声明
+## 十三、声明
 
 - 本项目与 Apple、小米、高通均无关联；
 - 所有实验均可能使设备无法启动，**请自行承担风险**，并提前完整备份；
 - 仓库内历史性的分区改造步骤**不可一键回滚**，请勿在主力设备上照做；
-- 代码与文档按现状提供，不附带任何担保。
+- 代码与文档按现状提供。
