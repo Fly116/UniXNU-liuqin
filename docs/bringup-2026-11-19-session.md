@@ -60,12 +60,50 @@ whole of `bsd_init` up to the buffer cache and then publishes block devices.
 * `IOService::getMatchingServices()` returns zero even for classes that definitely have
   registered instances at this point, so plane counts are **not** a valid signal here.
 
-## Open problem at the end of the session
+## Correction: startRoot runs once, and publication timing is not the problem
 
-`startRoot()` runs twice: once from the early root-device match (before `bsd_init`),
-once again after `probe-nub`. The early pass publishes and registers both windows
-(`REGPUBLISH ok` twice). The second pass rebuilds them, never gets IOMedia and reports
-`UFS ROOT FAILURE`, which aborts the root flow.
+A reliable state dump was added to the panic summary (the panel buffer loses and reorders
+lines, so the panic block is the only trustworthy channel on this board):
+
+```
+PUBSTATE entries=1 flag=1 this=0xfffffff27cab47e0 first=0xfffffff27cab47e0 published=1 busy=0
+```
+
+* `entries=1` — `startRoot()` runs **once**. The earlier "it runs twice" reading came from the
+  panel reordering lines (`U143:start-root` followed by `U14:blk-registered`).
+* `flag=1` — the idempotence guard is set; nothing is wrong with it.
+* `published=1` — only the first window (SystemOS) was started, then its media wait expired.
+
+Deferring publication was then tried: the publisher waits for the ufshc nub match
+(`gLatePublishGate`), which happens after `bsd_init` when matching is known to work. The gate
+was already open when the publisher ran, publication still happened late, and the media still
+never appeared — so "published too early" is not the explanation either.
+
+## What is left to determine
+
+Exactly one question: after `IOBlockStorageDevice::start()` succeeds and the service is
+registered (`REGPUBLISH ok`), why does no `IOBlockStorageDriver` claim the device and create an
+`IOMedia`?
+
+Diagnostics that exist but are not yet conclusive:
+
+* `IOService::getMatchingServices()` returns zero even for classes with live instances here, so
+  plane counts are meaningless.
+* `IORegistryIterator` over the platform expert should show what is really published, but the
+  panel loses that line before a photograph can capture it.
+
+**Next step (do this first):** build the registry-walk string into `gRootDiagnosticText` so it is
+printed inside the panic block, the one output that survives on this panel. That single line
+says whether an `IOBlockStorageDriver` exists, whether any `IOMedia` exists, or neither.
+
+Depending on the answer:
+
+* no driver at all -> check that IOStorageFamily's driver personality is registered and that
+  matching runs for a service created this early; possibly publish only after the platform
+  expert has published `IOResources`.
+* driver but no media -> the driver's start path is failing; check that reads issued through
+  `doAsyncReadWrite` still work after `bsd_init` (UFS writes are known to stall at that point,
+  and reads share the same transport slots).
 
 An idempotence guard (`gRootPublicationDone`) was added and is present in the kernel
 image (the `root-already-published` string is in the binary) but did not fire on the
