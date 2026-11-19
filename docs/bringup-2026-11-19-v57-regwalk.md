@@ -88,3 +88,66 @@ V58 st=<state> busy=<n> drv=<n> med=<n> mc=<XYZ> n=<n> dt=<device-type>
 - `dt`：`copyProperty("device-type")`，确认是 `Generic`。
 - 把媒体等待的 tick 数降下来，确保几十秒内能走到 panic，否则又拍不到。
 - 若 `st` 仍是 `0x0` → `doServiceMatch` 从未运行 → 试 `registerService(kIOServiceSynchronous)`。
+
+---
+
+# v58 实机结果（已在上机验证，2026-11-19 19:46）
+
+把面板照片分成上下两半拍，这次一次读全了。
+
+```
+U143:start-root
+REGPUBLISH ok
+U144:blk-registered
+U145:blk-matched
+U146:root-pub-SystemOS
+REGPROBE class=NativeUfsBlock castsDevice=1 castsService=1 state=0x0 busy=1
+CHAINPROBE devParent=ArmDTPlatform provParent=xiaomi,liuqin provPath=1 devAttached=1
+MEDIA start IOBlockStorageDevice=0 IOBlockStorageDriver=0 IOMedia=0 IOMediaBSDClient=0
+V58 pre  st=0x0 busy=1 dev=0 drv=0 med=0 bsd=0 mc=111 n=32 dt=Generic
+U147:root-media-timeout
+MEDIA timeout IOBlockStorageDevice=0 IOBlockStorageDriver=0 IOMedia=0 IOMediaBSDClient=0
+V58 post st=0x0 busy=1 dev=0 drv=0 med=0 bsd=0 mc=111 n=32 dt=Generic
+WALK from=ArmDTPlatform n=32 dev=0 drv=0 media=0 bsd=0 mc=111
+WALK direct: IOSystemStateNotification, IOPMrootDomain, IOPMrootDomain, IOPlatformDevice, ...
+WALK cls: NativeUfsBlock, NativeUfsBlock, ...
+WIN NativeUfsBlock state=0x0 matched=0 busy=1
+PUBSTATE entries=1 flag=1 this=0xffffff6a6172d80 first=0xffffff6a6172d80 published=1 busy=0
+UFS ROOT FAILURE: SystemOS window media not found
+```
+
+## 结论（这一轮钉死的）
+
+1. `mc=111` —— `IOBlockStorageDevice` / `IOBlockStorageDriver` / `IOMedia` 三个类都已注册。
+   **IOStorageFamily 加载并 start 过了**，"family 没加载"这条线排除。
+2. `dt=Generic` —— `IOBlockStorageDriver` personality 要求的属性条件满足，"属性不对"排除。
+3. `st` 在等待**前后都是 `0x0`**，`matched=0` —— `doServiceMatch()` **一次都没执行**。
+4. `busy` 从 `startMatching()` 的 `_adjustBusy(+1)` 之后一直是 `1`，直到超时都没回落 ——
+   说明 `_IOServiceJob` 一直躺在队列里，没有被 `_IOConfigThread` 取走。
+5. `n=32`、`WALK direct` 里是平台设备 —— 注册表很小，说明这时候匹配确实还没在这个子树里跑过。
+6. `WALK cls: NativeUfsBlock, NativeUfsBlock` —— 两个窗口确实都在 service plane 里，
+   挂在 `ArmDTPlatform` 下（`CHAINPROBE` 也证实）。
+7. `dev=0` 是**统计口径问题**：`dev` 用精确类名比 `IOBlockStorageDevice`，而我们的实例类名是
+   `NativeUfsBlock`，永远数不到。v59 改成用 `metaCast` 走元类链统计。
+
+**根因（已验证）：这块板子上 IOKit 的异步匹配线程不工作。**
+`registerService()` → `startMatching(0)` 只是把 job 排队，真正执行依赖 `_IOConfigThread`
+临时 `kernel_thread_start` 一个内核线程；那个线程没起来（失败是静默 `continue`），
+所以设备永远停在"已注册、未匹配"。
+
+## v59 的对策（已构建，未上机）
+
+1. `registerService(kIOServiceSynchronous)` —— 让 `doServiceMatch()` 在发布线程里就地执行，
+   不再依赖 config thread。
+2. `mediaUnderWindowExists()` 改为**遍历 service plane 并检查祖先链**，
+   不再用 `getMatchingServices()`（它按 matched 位过滤，永远看不到
+   `IOBlockStorageDriver::handleStart` 异步创建的 `IOMedia`）。
+3. `dev` 计数改用 `metaCast("IOBlockStorageDevice")`。
+
+镜像：`boot-v59-syncmatch.img`，kernel.macho sha256
+`71b1c0356ef75c5000a1cefd118fb0ae247dd7d9208d0c89237da1c85ebc5eba`。
+
+下机后先看照片上有没有：
+- `U145:blk-matched` 之后是否紧接 `V58 sync st=0x6 ...`（`0x6` = 匹配跑完了）
+- `drv=` 是否变成 1 或 2
+- 是否出现 `U148:root-media-SystemOS`（说明媒体被认领并找到）
