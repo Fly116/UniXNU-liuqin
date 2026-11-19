@@ -11,53 +11,53 @@
 | 固件启动 → UniXNU 菜单 → payload 卷挂载 | ✅ 实机 |
 | 内核跑到 `bsd_init` → `startRoot` | ✅ 实机 |
 | v39 元类修复（H16-F） | ✅ **实机通过** |
-| UFS 控制器初始化（DMA / 槽位 / SMMU / 停队列） | ✅ **实机打通** |
-| UFS 链路启动（UniPro NOP OUT） | ⚠️ 当前卡点 |
-| iOS 根卷 / 用户态 | ⛔ 未开始 |
+| UFS 控制器初始化 + 链路启动 + LUN 就绪 | ✅ **实机打通** |
+| 读 userdata GPT / 解析根布局 | ✅ **实机打通** |
+| iOS 根卷（需要 iOS userdata） | ⛔ 卡在 `root manifest rejected`（预期） |
+| 用户态 / 桌面 | ⛔ 未开始 |
 
-实机证据（`fastboot boot`）：
+实机证据（`fastboot boot`，2026-11-19 最后一轮）：
 
 ```
 NativeUfs: M:reg pre p=0xfffffff007adb6b0 link=0xfffffff007add1d0   ← 家族元类，不是毒值
 U:meta-ok                                                          ← ABI 闸 + 链校验通过
-M:stalled post cnt=1 … M:stalled scan ok …                         ← 本类正常登记
-…
-U:78:cpm-page → U:79:h:kmem-ok → U:80:h:dma-done                   ← DMA 拿到物理连续内存
-U:81:h:geom → U:82:h:slots → U:83:h:civac
-U:84:h:SMMU and request list → U:85:h:stopq → U:86:h:stopq-ok
-U:87:h:NOP OUT                                                     ← 当前终点：链路启动
+U:72:h:pre-used                                                    ← STARTUP 阶段预留的 DMA 区
+U:80:h:stopq-ok → U:81:h:NOP OUT → U:83:h:nop-ok                   ← UniPro 链路起来了
+U:84:h:power mode query → U:85:h:LUN ready                          ← 设备应答
+U:86:root-bring-up-ok → U:87:root-layout-ok                        ← 读到 GPT，布局解析成功
+UFS BOOT FAILURE: root manifest rejected                           ← 预期：设备上还没有 iOS 根镜像
 ```
 
-### 2026-11-19 的两个根因发现
+诊断行同时给出控制器状态（`op=28` 即 READ(10) 已成功执行、`ocs=00`），
+说明**块设备读写路径本身是通的**，只差一份合法的 iOS 根清单。
+
+### 2026-11-19 的根因链（全部实机证实）
 
 1. **`IOMapper` 从未被初始化**：`IOMapper::gSystem` 初始是 `kUnknown`（带等待位），
    只有 `IOMapper::setMapperRequired()` 会把它推到 `kNoMapper`/`kHasMapper`，
    而苹果平台的 platform expert 才会调用它。非苹果平台没人调，
-   于是任何 `IOBufferMemoryDescriptor` 创建都可能在 `waitForSystemMapper()` 里永久睡眠。
-   → 驱动里显式把 `gSystem` 置 0 绕过。
-
-2. **wired（不可分页）描述符的 `prepare()` 挂死**：定位到
-   `kIOMemoryAutoPrepare → prepare() → wireVirtual()`。pageable 描述符正常，wired 挂。
-   → 不再走 IOKit 描述符，直接 `kmem_alloc_contig(kernel_map, …)` 取物理连续页，
-   用 `ml_vtophys()` 取物理地址（`h:kmem-ok` 即此路径）。
-
-当前卡点：`hostNop()` 发出的 UIC NOP OUT 命令不返回（其 200 ms 超时没有生效），
-下一步给 `hostSubmit`/`hostAwait` 的等待循环打点。
+   任何 `IOBufferMemoryDescriptor` 创建都可能在 `waitForSystemMapper()` 里永久睡眠。
+   → 驱动里显式把 `gSystem` 置 0。
+2. **wired（不可分页）描述符的 `prepare()` 挂死**（`h:c3-wired`）；pageable 正常。
+   → 不走 IOKit 描述符，直接 `kmem_alloc_contig()` + `ml_vtophys()`。
+3. **早期运行时连续页分配不可靠**（10 次里约半数卡在页队列扫描），
+   且等待基元依赖的 `mach_absolute_time()` 在该阶段不前进。
+   → 在 `STARTUP_SUB_EARLY_BOOT` 阶段预先分配 DMA 区（`h:pre-used`），
+   并把完成等待的 `IODelay` 换成固定次数忙循环。
 
 ## 快速开始（测试已有镜像）
 
-下载 [Release `v39-linux-2026-11-18`](https://github.com/Fly116/UniXNU-liuqin/releases/tag/v39-linux-2026-11-18)，
+下载 [Release `v39-2026-11-19`](https://github.com/Fly116/UniXNU-liuqin/releases/tag/v39-2026-11-19)，
 然后：
 
 ```bash
 adb reboot bootloader
-fastboot boot boot-v39-2026-11-18.img
+fastboot boot boot-v39-prealloc.img
 ```
 
-菜单 15 秒后自动启动 `xnu`，屏幕依次出现 `K49:PE_init_iokit` → `B68:bsd_init` →
-`U:60:start-root` → `U:61:r0-enter` → `M:reg pre …` → `U:66:meta-ok` →
-`U:68:h:controller map` → `U:79:h:kmem-ok` → `U:87:h:NOP OUT`（2026-11-18 的镜像会停在
-`h:alloc1`，两者都是有效的起点）。
+菜单 15 秒后自动启动 `xnu`，屏幕会一路走到
+`U:87:root-layout-ok` 并以 `UFS BOOT FAILURE: root manifest rejected` 结束——
+这就是当前这台设备能达到的最远位置。
 
 从零构建见下文[「v39：Linux 构建链与实机状态」](#v39linux-构建链与实机状态2026-11-18)。
 
