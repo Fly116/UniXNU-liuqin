@@ -151,3 +151,56 @@ UFS ROOT FAILURE: SystemOS window media not found
 - `U145:blk-matched` 之后是否紧接 `V58 sync st=0x6 ...`（`0x6` = 匹配跑完了）
 - `drv=` 是否变成 1 或 2
 - 是否出现 `U148:root-media-SystemOS`（说明媒体被认领并找到）
+
+---
+
+# v60：等待线程转储 + IOResources 立即通知（2026-11-19 夜，已构建未上机）
+
+v58 只回答了"匹配没跑"，但"没跑"有两种成因，从外部看一模一样：
+
+- `_IOServiceJob` 排队后**根本没有配置线程**来取；
+- 配置线程取了，但**卡在某个 `start()` 里永不返回**。
+
+v60 直接把这个区分做成证据。
+
+## 移植自 SM8475 参考实现（UniXNU-pong → zizhan）
+
+| 改动 | 出处 | 作用 |
+|---|---|---|
+| `liuqin_dump_waiting_threads()` | zizhan 补丁 0005 | 每个等待线程一行：tid、K/U、block hint、wait event、continuation、保存的 lr 和前 4 帧 |
+| `publishResource()` 立即发 matched 通知 | zizhan 补丁 0006 | `IOResources` 仍在配置时不推迟 re-match，避免 `waitForMatchingService()` 永不醒来（他们 3/4 挂根失败的根因） |
+| `liuqin_iokit_job_counts()` | 本项目新增 | 导出 `gOutstandingJobs / gNumConfigThreads / gNumWaitingThreads` |
+
+XNU 侧以幂等脚本形式记录在 `patches/xnu/manual/0001-liuqin-waiters-and-resource-notify.py`，
+构建前对 `out/liuqin/tree/.cache/xnu-work` 跑一次即可。
+
+## 驱动侧
+
+超时路径上新增两段输出，都追加进 panic 文本、位于摘要行之上：
+
+```
+JOBS out=<n> cfg=<n> wait=<n> max=<n> cpus=<n>
+WAITERS begin
+W <tid>k h=.. ev=.. cont=.. lr=.. bt ....
+...
+WAITERS end <n>
+V58 post st=0x.. busy=.. ...
+```
+
+## 上机后怎么读
+
+| 现象 | 结论 |
+|---|---|
+| `JOBS out=0` | 队列里没有作业：匹配已经跑过了（与 `st` 对照） |
+| `JOBS out>=1 cfg=0` | **没有配置线程** —— 确认 `_IOConfigThread` 创建失败 |
+| `JOBS out>=1 cfg>=1` | 有线程但没处理完 → 看 WAITERS 里哪个线程卡住 |
+| `st=0x6` 且 `drv>=1` | 匹配成功，下一步是媒体/BSD 节点 |
+| `WAITERS` 出现 `cont=` 落在 `start`/`IOSleep` 附近 | 就是被那个 `start()` 卡住了，按地址符号化即可定位 |
+
+镜像：`boot-v60-waiters.img`，kernel.macho sha256
+`a926cb7ee2e9627551570d0384d893c171f6adb2ff964ce4847a2d0d3e403ba6`。
+
+> 踩过的坑：第一次编 v60 时 `thread.c` 里多 include 了一次 `thread_kernel_state.h`
+> （该头无 include guard），编译失败并把 `thread.o` 删了；而 `build-libpthread-kernel.py`
+> 的符号审计要读 `link.filelist` 里列出的对象，于是接着报 `Unavailable real kernel imports`。
+> 用记录下来的 `thread.o.json` 单独重放编译即可恢复。
