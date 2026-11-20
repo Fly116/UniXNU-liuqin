@@ -204,3 +204,70 @@ V58 post st=0x.. busy=.. ...
 > （该头无 include guard），编译失败并把 `thread.o` 删了；而 `build-libpthread-kernel.py`
 > 的符号审计要读 `link.filelist` 里列出的对象，于是接着报 `Unavailable real kernel imports`。
 > 用记录下来的 `thread.o.json` 单独重放编译即可恢复。
+
+---
+
+# v60 实机结果（已验证，2026-11-20 00:20）
+
+里程碑停在同步匹配的入口：
+
+```
+U141:probe-nub
+U142:start-enter
+U143:start-root
+U144:sync-match-enter
+REGPUBLISH ok
+（之后没有 blk-registered，也没有 blk-matched）
+```
+
+## 结论
+
+**同步匹配在 `doServiceMatch` 内部挂死了。**
+
+`registerService(kIOServiceSynchronous)` 的路径是：
+`REGPUBLISH ok`（路径检查 + platformAdjustService 通过）→ `startMatching(0x2)`
+→ 因为 sync=true，**当场**执行 `doServiceMatch()` → 不再返回。
+
+所以：
+
+- `U145:blk-registered`（registerService 返回后打）永远没出现；
+- 媒体等待、`JOBS`、`WAITERS` 全都排在它后面，**一次都没机会执行**；
+- v60 精心准备的两组诊断，被自己的修复挡在了门外。
+
+对照 v58：**异步路径"排队不执行"，同步路径"执行但挂死"** —— 两条路都被堵住，
+说明 IOKit 匹配链在早期这个上下文里根本不可用，而不是"我们调用的方式不对"。
+
+## 为什么会挂住（推测，待验证）
+
+`doServiceMatch` → `startCandidate` → `IOBlockStorageDriver::start(我们的窗口)`
+→ `open(this)` / `handleStart` / `provider->joinPMtree(this)`。
+而此刻我们的 `NativeUfsBlock::start()` **还没有返回**，窗口处于半初始化状态；
+`IOStorageDriver` 在 `open()`/`handleStart()` 里回头对这台"正在 start 的设备"做操作，
+很容易与 `start()` 自己持有的仲裁/初始化状态互锁。
+
+参考实现对这一点很谨慎：它们**从不在 `start()` 里同步匹配**，而是无参
+`registerService()`，并且把发布时机推迟到整个启动更靠后的位置
+（`PongUfsTransport.cpp:554`、`:576-605`）。
+
+## v61 的设计（下次执行）
+
+1. **不要在 `start()` 里同步匹配**。改为在 `start()` 末尾起一个独立内核线程，
+   由它调用 `设备->startMatching(kIOServiceSynchronous)`；
+   发布线程本身继续往下走，不被拖住。
+2. 发布线程**轮询**窗口的 `getState()`（不用定时器），等 N 秒；
+   超时就调用 `liuqin_dump_waiting_threads()` —— 这次它会真的有机会跑，
+   并且能直接给出**卡在 `doServiceMatch` 里的那个线程的栈**。
+3. 拿到栈之后按地址符号化，定位到具体是 `open()`、`handleStart()` 还是
+   `joinPMtree()` 死锁，再决定是绕开还是修。
+
+## 本轮已确认无误、可复用的资产
+
+| 资产 | 状态 |
+|---|---|
+| XNU 侧 `liuqin_dump_waiting_threads()` | 已编进镜像（`WAITERS` 字符串在），只是本轮没被触发 |
+| XNU 侧 `publishResource()` 立即发 matched 通知（0006） | 已在镜像里 |
+| XNU 侧 `liuqin_iokit_job_counts()` | 已在镜像里 |
+| 驱动侧 JOBS/WAITERS 超时输出 | 已在镜像里，等 v61 让它跑起来 |
+| 构建链 | 正常，含「单对象重放编译」的恢复办法 |
+
+镜像保留：`boot-v60-waiters.img`（kernel.macho sha256 `a926cb7e…`）。
