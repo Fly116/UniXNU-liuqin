@@ -1,50 +1,53 @@
 #!/bin/bash
-# Assemble the flashable liuqin boot image from one kernel-upstream run:
-#   * kernel slot: gzip(BootShim + UEFI FD) + the stock Cape SoC DTB, FD from the
-#     local sandbox build (menu patch applied);
-#   * ramdisk: the run's payload.img in the PONGFAT1 envelope;
-#   * ADT/manifest: official finalize-pong-adt.py, the parameters upstream's
-#     package.yml passes (liuqin board, --ufs-probe, 8 GiB DRAM, 4 GiB window, 1 CPU).
-# usage: make_v112.sh <run-id> <out.img>
+# Assemble a flashable liuqin boot image from one kernel-upstream run.
+#
+#   kernel slot: gzip(BootShim + UEFI FD) + the stock Cape SoC DTB. The FD is the
+#                local sandbox build with the menu-rotation patch.
+#   ramdisk:     the existing UniXNU payload FAT with the run's kernel.macho put in
+#                place of the old one, wrapped in the PONGFAT1 envelope.
+#   ADT:         official finalize-pong-adt.py with upstream's parameters.
+#
+# usage: make_v112.sh <run-id> <out.img> [kernel.macho path]
 set -euo pipefail
 
-RUN="${1:?usage: make_v112.sh <run-id> <out.img>}"
-OUT="${2:?usage: make_v112.sh <run-id> <out.img>}"
+RUN="${1:?usage: make_v112.sh <run-id> <out.img> [kernel]}"
+OUT="${2:?usage: make_v112.sh <run-id> <out.img> [kernel]}"
+KERNEL="${3:-}"
 
 FD=/root/work/uefi-liuqin-d97/repo/Build/liuqinPkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd
 UEFI_D97=/root/work/uefi-liuqin-d97/repo
 CAPE=/root/work/uefi-liuqin/Resources/DTBs/liuqin.dtb
 HW_DTB=/root/work/up-liuqin/build/liuqin/liuqin.dtb
 LAYOUT=/mnt/f/liuqin_ios/_dl/ci/meta/volume-layout.json
+BASE_PAYLOAD=/root/work/UniXNU-new/out/liuqin/payload/payload.img
 WORK=/root/work/v112-${RUN}
 
-bash /mnt/f/liuqin_ios/scratch/ci_fetch_kernel.sh "$RUN" kernel-upstream-encrypted
-PRODUCTS="/root/work/ci-kernel-${RUN}/products"
-
-PAYLOAD="$(find "$PRODUCTS" -maxdepth 4 -type f -name payload.img | head -1)"
-KERNEL="$(find "$PRODUCTS" -maxdepth 4 -type f -name kernel.macho | head -1)"
-[ -n "$PAYLOAD" ] || { echo "no payload.img in ${PRODUCTS}" >&2; exit 1; }
-echo "payload: ${PAYLOAD} ($(stat -c%s "$PAYLOAD") B)"
-echo "kernel:  ${KERNEL:-none}"
-sha256sum "$PAYLOAD" "$KERNEL" 2>/dev/null || true
+PRODUCTS="/root/work/ci-kernel-${RUN}/products/products"
+if [ ! -d "$PRODUCTS" ]; then
+  bash /mnt/f/liuqin_ios/scratch/ci_fetch_kernel.sh "$RUN" kernel-upstream-encrypted
+fi
+if [ -z "$KERNEL" ]; then
+  KERNEL="$(find "$PRODUCTS" -maxdepth 3 -type f -name kernel.macho | head -1)"
+fi
+[ -f "$KERNEL" ] || { echo "no kernel.macho found" >&2; exit 1; }
+echo "kernel: $KERNEL ($(stat -c%s "$KERNEL") B)"
+sha256sum "$KERNEL"
 
 rm -rf "$WORK"
 mkdir -p "$WORK/payload" "$WORK/boot"
-cp "$PAYLOAD" "$WORK/payload/payload.img"
+cp "$BASE_PAYLOAD" "$WORK/payload/payload.img"
+echo "replacing kernel.macho inside the payload FAT"
+MTOOLS_SKIP_CHECK=1 mdel -i "$WORK/payload/payload.img" ::/EFI/UniXNU/Payloads/kernel.macho 2>/dev/null || true
+MTOOLS_SKIP_CHECK=1 mcopy -o -i "$WORK/payload/payload.img" "$KERNEL" ::/EFI/UniXNU/Payloads/kernel.macho
+MTOOLS_SKIP_CHECK=1 mdir -i "$WORK/payload/payload.img" ::/EFI/UniXNU/Payloads/
 
 # The release boot.img only has to carry the firmware in its kernel slot: finalize
 # replaces the appended DTB with the stock Cape DTB and the ramdisk with the
-# PONGFAT1 payload, so it is built with an empty ramdisk.
+# PONGFAT1 payload, so it is built with a throwaway ramdisk.
 cd /root/work/UniXNU-new
 python3 ./unixnu bootimg --uefi "$UEFI_D97" --fd "$FD" --dtb "$CAPE" \
   --ramdisk /dev/null -D /root/work/device-new 2>&1 | tail -3 || true
-BUILT=/root/work/UniXNU-new/out/liuqin/boot/boot.img
-if [ ! -s "$BUILT" ]; then
-  echo "bootimg produced nothing; falling back to the v106 kernel slot" >&2
-  cp /mnt/f/liuqin_ios/boot-v109-cape.img "$WORK/boot/boot.img"
-else
-  cp "$BUILT" "$WORK/boot/boot.img"
-fi
+cp /root/work/UniXNU-new/out/liuqin/boot/boot.img "$WORK/boot/boot.img"
 
 cd /root/work/up-liuqin
 PONG_HARDWARE_DTB="$HW_DTB" UNIXNU_UEFI="$UEFI_D97" \

@@ -1,362 +1,195 @@
 # UniXNU for Xiaomi Pad 6 Pro（liuqin / SM8475）
 
-在**高通骁龙 8+ Gen 1（SM8475）的小米平板 6 Pro** 上，让 XNU（Darwin / iOS 内核）跑起来的不完整移植仓库。
+在高通骁龙 8+ Gen 1（SM8475）的小米平板 6 Pro 上把 XNU（Darwin / iPadOS 内核）跑起来的不完整移植仓库。
 
-> ## ⚠️ 请先读完这段，再决定要不要继续折腾
+> ## ⚠️ 先读这段：当前不能进 iOS 界面
 >
-> **这个仓库目前无法启动 iOS 用户界面，也看不到任何 iOS 桌面。**
+> **2026-11-22 现状**：引导链已经完整打通到「等待根设备」——
+> 固件 → UniXNU 菜单 → DarwinBoot → **prelinked XNU** → IOKit → APFS kext → CPU 调频 → framebuffer
+> 全部起来，最后停在 `Still waiting for root device` / `panic: Failed to mount root device`。
 >
-> 现状是：内核能启动、UFS 存储链路能跑通、能读取真实的 iOS 根镜像、能把镜像窗口发布成块设备；
-> 但**根卷还没挂载成功**，更没有 `launchd`、没有图形界面。所有发布出去的镜像都只是
-> **实验性 bring-up 镜像**，仅用于 `fastboot boot` 内存启动调试。
+> 唯一剩余阻塞：**NativeUfs 的 TUR 探测命令提交后拿不到完成中断**，UFS 媒体未发布。
+> 详细诊断见 [docs/ufs-tur-analysis-2026-11-22.md](docs/ufs-tur-analysis-2026-11-22.md)。
 >
-> 另外必须说明一个**硬件层面的现实**：iOS 的图形栈依赖 Apple 自己的 GPU（Metal 驱动）。
-> 这台机器目前没有GPU驱动
+> 图形界面还没开始，而且当前构建**没有启用 Adreno GPU 驱动**：屏幕上的文字是
+> `MiniIOFramebuffer` + CPU 软件绘制（`pong_software_ui=1`），不是 GPU。
 >
-> 本仓库**没有**任何写入 Android 分区的自动化脚本，所有实验默认 `fastboot boot`（只进内存）。
-> 除非你清楚自己在做什么，**不要**照搬本仓库历史中的分区改造步骤。
+> 所有镜像都是**实验性 bring-up 镜像**，只用于 `fastboot boot`（纯内存启动）。
+> 除用户在 2026-11-21 明确授权的 A2 分区方案（备份 + 重建 `userdata` + 新增 `unixnu`）外，
+> 本仓库**不写任何 Android 分区**。
 
 ---
 
-## 一、这个项目是什么 / 不是什么
+## 一、一句话现状
 
-**是**：
+**从"块设备注册了但没有 IOMedia"推进到"内核跑完 IOKit 初始化、等待根设备"**：
+外围变量（固件/ADT/CPU 数/窗口/参数/DTB/prelink slide/ADT 容器）已逐项实机排除，
+剩余卡点收敛到 **UFS 传输层**一处。
 
-- 一个「把 XNU 移植到非苹果 SoC」的工程实验记录：包含板级描述、内核补丁、UFS 块设备驱动、
-  构建脚本、以及大量实机调试结论与踩坑档案；
-- 一份**可复现的构建与调试方法**：从官方线刷包抽 UEFI、构建 XNU、打包 `boot.img`、
-  在真机上用面板里程碑定位卡点。
+## 二、里程碑总览
 
-**不是**：
+| # | 里程碑 | 状态 | 证据 / 说明 |
+|---|--------|------|-------------|
+| 0 | 可复现构建链（固件 / prelink / payload / boot.img） | ✅ | Linux 可编固件；内核/prelink 走 GitHub Actions（macOS） |
+| 1 | 固件启动 → UniXNU 菜单 → payload 卷 | ✅ 实机 | 同源固件（document97/uefi-liuqin + 锁定 EDK2） |
+| 2 | 菜单默认项修复（无输入设备时不再轮换高亮） | ✅ 实机 | 见 [docs/menu-default-entry.md](docs/menu-default-entry.md) |
+| 3 | DarwinBoot → XNU → `VM bootstrap done` | ✅ 实机 | v112 起通过；v106 及之前的崩溃根因见 [docs/prelink-slide-exclusion-2026-11-21.md](docs/prelink-slide-exclusion-2026-11-21.md) |
+| 4 | IOKit 初始化、ArmDTPlatform、UFS nub、ArmCpu、APFS kext | ✅ 实机 | v114 日志：`apfs_module_start`、`ArmCpu: CPU 0 first boot completed` |
+| 5 | Framebuffer 输出（1800×2880 / 7200 B/行） | ✅ 实机 | `MiniIOFramebuffer: Pong fixed refresh 120 Hz`（软件绘制，非 GPU） |
+| 6 | AppleARMCPU 的 DT 校验 | ✅ 绕过 | 其要求 Apple 私有 CPU 属性；用二进制补丁 `_validateConfiguration` 返回 true |
+| 7 | **UFS 传输层（TUR 完成）** | ❌ **当前卡点** | TUR 提交后无完成中断：`ocs=0f`、`scsi=ffff`、`db=1` 未清、`polls=1589` |
+| 8 | 根镜像写入（A2 + `userdata.simg`） | ⏸ 已备好 | GPT 双表校验、写镜像命令、回滚步骤见 [docs/a2-partition-runbook.md](docs/a2-partition-runbook.md) |
+| 9 | APFS 根卷挂载（T1 的前半） | ⛔ 未完成 | 等 #7 |
+| 10 | 用户态（pong init / launchd） | ⛔ 未开始 | 上游 pong 上已实现，liuqin 待调 |
+| 11 | 图形界面 / SpringBoard | ⛔ 未开始 | 走软件 UI 路线（`libpong-ui`）；GPU 后置 |
 
-- 不是能日常使用的系统，不是「刷完就能进 iOS」的一键包；
-- 不是与苹果官方相关的项目；
-- 不提供任何对 Android 分区的自动破坏性操作。
+粗略工作量估计（以"进系统界面"为目标）：**引导链 70%，UFS 传输 15%，根卷/用户态/UI 15%**。
 
----
+## 三、两条技术栈（务必分清）
 
-## 二、当前进展总览
+| | 旧栈：ShengUfs 路线（已暂停） | 当前主线：pong 栈（format 2） |
+|---|---|---|
+| 设备仓库 | `Fly116/UniXNU-liuqin`（sheng 派生） | `document97/UniXNU-liuqin@fe0e8d7`（上游最新） |
+| iOS | iPadOS 17.7.11 / 21H461 | iPadOS 18.7.10 / 22H374（Darwin 24.6.0） |
+| 存储驱动 | ShengUfs（我们维护；本机可读写 UFS，但 IOKit 同步匹配死锁） | NativeUfs（上游，当前 TUR 卡点） |
+| 构建 | Linux | GitHub Actions `macos-15-intel` |
+| 状态 | 暂停（保留文档与补丁） | **主线** |
 
-| # | 里程碑 | 状态 | 说明 |
-|---|--------|------|------|
-| 0 | Linux 构建链（固件 / 内核 / prelink / payload / boot.img） | ✅ | 不需要 macOS |
-| 1 | 固件启动 → UniXNU 菜单 → payload 卷挂载 | ✅ 实机 | Mu-Silicium UEFI |
-| 2 | 内核启动 → `bsd_init` → `startRoot` | ✅ 实机 | |
-| 3 | 元类（`OSMetaClass`）修复 | ✅ 实机 | 见 §3.5，后来的结论是"符号绑定少了一次 slide" |
-| 4 | UFS 控制器初始化 / 链路启动 / LUN 就绪 | ✅ 实机 | v40 打通，READ(10) 可用 |
-| 5 | 读 GPT / 解析 SHNGROOT 根清单 | ✅ 实机 | `root-layout-ok` / `root-manifest-ok` |
-| 6 | 设备分区改造：`userdata` → 94 GiB + 新增 `unixnu` 11.79 GiB | ✅ 实机 | 见 §5，**会动分区表**，务必先备份 |
-| 7 | 把 8.74 GiB iOS 根镜像写入 `unixnu` 并被内核接受 | ✅ 实机 | `root-plan-ok` / `root-iostart-ok` |
-| 8 | 发布窗口为块设备（`IOBlockStorageDevice`） | 🟡 部分 | 构造函数、注册均已打通，但 **IOKit 迟迟不创建 `IOMedia`** |
-| 9 | APFS 根卷挂载（T1） | ⛔ 未完成 | 卡在 #8 |
-| 10 | 用户态 `launchd`（T2） | ⛔ 未开始 | |
-| 11 | 图形界面 | ⛔ 未开始，且受 GPU 限制（见顶部警告） | |
+旧栈的 UFS 实现（`drivers/ShengUfs`）在**同一台设备上能完成 UFS 命令**，是当前 UFS 问题最有价值的对照物。
 
-一句话概括：**存储这一层（最难、最硬件相关）基本打通；根卷挂载还差一步；用户态与界面还没开始。**
+## 四、最近的关键突破（2026-11-21 → 11-22）
 
-### 进度参考（按工作量粗略估计）
+1. **prelink slide 用错导致 VM bootstrap panic**
+   CI 原来用 `--slide=-0x1000000`（21H461 的数字），把 kexts 放到内核 text 之下，与内核内建绑定基址
+   `0xfffffff00b000000` 错位。改用上游 `slide = "auto"`（由 22H374 kernelcache 派生，实际为
+   `0x5ed0000`）后该 panic 消失。详见 [docs/prelink-slide-exclusion-2026-11-21.md](docs/prelink-slide-exclusion-2026-11-21.md)。
+2. **上游最新源码重编**：`document97/UniXNU-liuqin@fe0e8d7`（2026-11-21 drop）比原先 pin 的
+   QPRS-6 版本新，含 UFS/SMMU 修复与 PRNG/crypto 兜底补丁。CI 工作流见
+   [docs/v112-upstream-kernel-2026-11-21.md](docs/v112-upstream-kernel-2026-11-21.md)。
+3. **AppleARMCPU 的 DT 校验绕过**：`AppleARMCPU::_validateConfiguration()` 要求 Apple 私有
+   `/cpus` 属性（`max_cpus`、`cpu-id`、`interrupts`、`function-ipi_*`），我们的非 Apple 设备树
+   永远满足不了。二进制补丁把该函数入口改成 `mov w0,#1; ret` 后，内核越过该 panic。
+   详见 [docs/v114-root-device-ufs-2026-11-22.md](docs/v114-root-device-ufs-2026-11-22.md)。
+4. **菜单默认项**：无输入设备时菜单每 2 秒轮换高亮，看起来"默认停在 2: Restart"，实际超时会启动
+   第 1 项。已改固件 `Menu.c` 去掉强制轮换，高亮固定在默认项。
+5. **当前唯一卡点**：NativeUfs TUR 无完成中断（详见下一页文档）。
 
-- 硬件/存储 bring-up：约 100%
-- 块设备发布：约 85–90%
-- APFS 根卷挂载：约 10%
-- 用户态：约 0%
-- 图形界面：0%
+## 五、构建与验证
 
-综合约 **45–50%**（以"能看到某种界面/用户态输出"为目标）。
+### 5.1 CI（GitHub Actions，仓库 `Fly116/liuqin-ipados18-ci`）
 
----
+| 工作流 | 用途 |
+|---|---|
+| `kernel-upstream.yml` | **当前主线**：从 `document97/UniXNU-liuqin@fe0e8d7` 重编内核，`slide=auto`；`prelink=true/false` 可选；会把 `ci/patches/*.patch` 注入 device 树 |
+| `kernel.yml` | 旧主线（QPRS-6@38ca105d），已改成正确 slide `0x5ed0000` |
+| `userdata.yml` | 生成 22H374 userdata 镜像（OS/SystemOS/Data 三窗口） |
+| `metal.yml` | pong Metal（GPU）配套产物，当前 bring-up 未使用 |
 
-## 三、已经实机打通的硬骨头（技术档案）
+触发与取产物：
 
-这一节是本仓库最有价值的部分：每一条都是在这台真机上验证过的结论，能帮后来者少走几天弯路。
+```bash
+# 触发（示例：prelink=true）
+gh workflow run kernel-upstream.yml -R Fly116/liuqin-ipados18-ci \
+  -f device_ref=fe0e8d790e24120970083e20c1a7d9c86cdbb87c \
+  -f unique_chip_id=84750a0b -f prelink=true
 
-### 3.1 非苹果平台没人初始化 `IOMapper`
-
-IOKit 的 DMA 路径默认依赖 `IOMapper::gSystem`，而它在苹果平台上由特定驱动设置。
-非苹果平台永远保持 `kUnknown`，导致所有需要映射的分配路径不可用。
-**处理**：驱动里显式 `IOMapper::gSystem = 0`，并用 `kmem_alloc_contig` + `ml_vtophys` 自建 DMA 缓冲。
-
-### 3.2 wired（不可分页）描述符的 `prepare()` 永不返回
-
-`IOBufferMemoryDescriptor` 走 `kIOMemoryAutoPrepare → prepare() → wireVirtual()` 时挂死。
-**处理**：不使用 wired 描述符，改用可分页路径 + 自己管理物理地址。
-
-### 3.3 早期连续页分配不可靠 / `mach_absolute_time()` 不前进
-
-- `kmem_alloc_contig` 在驱动启动阶段约有一半概率卡死在 `vfc-locked`；
-  **解决**：把连续页分配提前到 `STARTUP (EARLY_BOOT, STARTUP_RANK_FIRST, ...)` 阶段做一次，之后复用。
-- 早期 `mach_absolute_time()` 不前进，所有**基于 deadline 的等待都会挂死**；
-  **解决**：UFS 等待改成忙等 + 计数上限，不用时间。
-
-### 3.4 `IOSleep()` 在本平台永不返回（重要）
-
-这不是"睡得久"，而是**永远醒不过来**。凡是 `IOSleep` 参与的等待都会变成永久挂起，
-而且因为它是忙等实现，还会饿死其它线程。
-**处理**：等待逻辑一律改成「忙等 + `thread_yield_to_preemption()` 让出 CPU」，
-必要时主动调用 `IOService::startDeferredMatches()` 推动 IOKit 匹配。
-（本仓库 v45 镜像就是靠这条才把"卡住不动"变成"能报超时错误"。）
-
-### 3.5 预链接 kext 的符号绑定漏了 slide（也解释了"元类被涂鸦"）
-
-`emit_prelink.py` 把 IOStorageFamily 放在 `原始 kernelcache VA + slide`（本板 `-0x1000000`），
-但 `build-liuqin-ufs-bindings.py` 早期版本按**原始 VA** 写绝对符号。
-结果 `new NativeUfsBlock` 会跳到 16 MiB 之外的零填充区，执行 `UDF #0`（未定义指令）——
-构造函数根本没跑，块设备发布自然无法开始。
-同一个 stale 值也是历史上"元类 `superClassLink` 被涂鸦成 ASCII 字符"的真正原因。
-**处理**：绑定生成时套用 board 的 slide（`scripts/build-liuqin-ufs-bindings.py`）。
-
-### 3.6 device-tree 父节点无法发布服务
-
-`IOService::registerService()` 在服务于 `gIOServicePlane` 中找不到通往 registry root 的路径时，
-会**静默返回**（连日志都不打）：
-
-```c
-while (parent && (parent != root))
-	parent = parent->getParentEntry(gIOServicePlane);
-if (parent != root) { IOLog("... not registry member ..."); return; }
+# 取内核产物（解密 + 解压）
+bash docs/ci-fetch-kernel.sh <run-id> kernel-upstream-encrypted
 ```
 
-而本驱动是挂在**设备树节点**（`xiaomi,liuqin`）上的，该节点在 service plane 里没有父节点，
-于是窗口设备从未真正注册（`state=0x0`），存储家族驱动自然看不到它。
-**处理**：发布前把窗口 attach 到 **platform expert（`ArmDTPlatform`）**，链路可达 root，
-之后能看到 `REGPUBLISH ok`。
+### 5.2 本地：组装可引导镜像
 
----
+```bash
+# 官方 finalize（ADT/容器/PONGFAT1 ramdisk）+ 我们的菜单修复固件 + 原厂 Cape DTB
+bash docs/make-v112.sh <run-id> boot.img [可选的内核 kernel.macho]
 
-## 四、当前卡点与已知问题
+# 变体：
+#  - 用 native 内核：<run-id> 来自 prelink=false 的构建
+#  - 二进制补丁内核：先 patch，再作为第 3 个参数传入
+```
 
-**卡点**：`NativeUfsBlock::start()` 成功、`registerService()` 也真正发布了（`REGPUBLISH ok`），
-但之后 **没有 `IOBlockStorageDriver` 认领该设备**，因此没有 `IOMedia`，
-媒体等待超时 → `UFS ROOT FAILURE: SystemOS window media not found`。
+补丁技巧（AppleARMCPU 校验）：
 
-**已排除**的假设（省得后来者重查）：
+```python
+d = bytearray(open("kernel.macho","rb").read())
+fo = 0x18dd000 + (0xfffffff00b80dad4 - 0xfffffff00b7a8000)  # __PLK_TEXT_EXEC
+d[fo:fo+8] = bytes.fromhex("20008052c0035fd6")              # mov w0,#1 ; ret
+open("kernel-patched.macho","wb").write(d)
+```
 
-| 假设 | 结论 |
-|------|------|
-| 元类链断裂（历史 H16） | ❌ 已排除，`metaCast("IOBlockStorageDevice")` 正常 |
-| 服务没注册 | ❌ 已修（改挂 platform expert） |
-| `startRoot` 被调用两次 | ❌ 已排除，`PUBSTATE entries=1` |
-| 发布太早、IOKit 匹配未就绪 | ❌ 已排除（加了延迟门仍无 IOMedia） |
-| `IOService::getMatchingServices()` 计数为 0 | ⚠️ 该方法在此阶段不可信，不能作为证据 |
-
-**下一步优先级**：
-
-1. 用**注册表迭代器**（`IORegistryIterator`）遍历 platform expert 下的服务，确认到底有没有
-   `IOBlockStorageDriver` / `IOMedia`；**注意把结果拼进 panic 文本**，因为面板普通输出行会丢失；
-2. 若没有驱动 → 查 IOStorageFamily 的 personality 是否注册、匹配是否真的在跑；
-3. 若有驱动无媒体 → 查驱动的 start 路径，以及 **`bsd_init` 之后 UFS 读是否仍可靠**
-   （UFS 写在 `bsd_init` 缓冲缓存初始化之后会挂死，读共用同一套传输槽位，这是真实风险）。
-
----
-
-## 五、设备分区改造（`unixnu`）说明
-
-> ⚠️ **这是本仓库唯一动过分区的部分，且不可"一键回滚"。做之前必须完整备份。**
-> 本人（@Fly116）的设备已经改造完成；如果你只是来复现内核部分，**不需要**做这一步。
-
-原因：Android 的 `/data` 位于 f2fs + metadata 加密（dm-default-key）之上，
-XNU 的裸读拿不到明文，所以 iOS 根镜像必须放在一块**内核能裸读写**的独立分区里。
-而 128 GB 设备原本排满，于是做了：
-
-1. 完整备份 GPT（主/备两份，CRC 校验）与 `/sdcard`；
-2. 改写 **primary GPT**：`userdata` 105.79 GiB → **94 GiB**，尾部新增 **`unixnu`** 11.79 GiB；
-3. `fastboot erase userdata metadata` → Android 重新格式化为 94 GiB（**应用数据会清空，文件已备份**）；
-4. 用 `unixnu userdata` 从 iPad7,1 17.7.11 (21H461) IPSW 构建 9,382,658,048 B 的根镜像；
-5. sparse 化后写入 `unixnu`；
-6. 内核用 `native-ufs-root-partition=unixnu` 启动。
-
-**保数据缩容（原地缩 f2fs）试过两版，都不可行**：Android 13 的 `/data` 有大量 bind mount，
-卸载时触发 `reboot,vold-failed` 保护，已放弃。
-
-相关工具与文档：
-
-- `scripts/install-liuqin-ufs-data.py`（镜像切分/写入，含 `--partition-offset`、自检）
-- `docs/userdata-carve-plan.md`、`docs/userdata-build-plan.md`
-- `docs/bringup-2026-11-19-session.md`（那一轮的全部结论）
-
----
-
-## 六、快速开始（测试已有镜像）
-
-> 只做 `fastboot boot`（加载进内存），**不要** `fastboot flash`。
-> 前提：设备已完成 §5 的分区改造，否则会在解析根布局处停止。
+### 5.3 上机
 
 ```bash
 adb reboot bootloader
-fastboot boot boot-v41-unixnu.img          # 或 Releases 中最新的实验镜像
+fastboot boot boot-v114-nocpuvalidate.img     # 只进内存，不写分区
 ```
 
-观察面板里程碑（U/B/K 开头的编号行）。预期会看到：
+## 六、已验证镜像
 
-```
-U86:root-bringup-ok → U87:root-layout-ok
-U88:root-manifest-ok → U89:root-plan-ok → U90:root-iostart-ok
-...
-U139:probe-nub → U140:start-enter → U141:start-root
-U142:blk-registered → U143:blk-matched → U146:root-pub-SystemOS
-U147:root-media-timeout        ← 当前卡在这里
-```
+| 版本 | 内容 | sha256 |
+|---|---|---|
+| v106 | 旧 CI prelink（slide=-0x1000000）→ VM bootstrap panic | `5bc4f5d8…` |
+| v107 | native 内核 → 越过 VM bootstrap，停在 `read_random` NULL 表 | — |
+| v108 | 正确 slide `0x5ed0000` → 仍 VM bootstrap panic | — |
+| v109 | + 原厂 Cape DTB → 同一 panic | — |
+| v110 | 官方 finalize ADT/容器 → 同一 panic | `e96fb53b…` |
+| v111 | 菜单修复固件 | `10ccca01…` |
+| **v112** | 上游最新 prelinked 内核 → 撞 AppleARMCPU 校验 | `5f6d1bcc…` |
+| v113 | 上游最新 native 内核 → 60 s 内崩（缺 kext 函数表） | `ac1a2428…` |
+| **v114** | v112 + AppleARMCPU 校验补丁 → **到 root device 阶段** | `0213013f678733b8c059ef132bb55217c0ca29659eaeeea0858dd3b36352437b` |
 
-排障：`docs/` 下有本轮全部调试记录；`docs/bringup-2026-11-19-session.md` 是最新的一份。
+## 七、下一步路线
 
----
+1. **修 UFS 传输层**（当前唯一硬阻塞）：对照 `drivers/ShengUfs`（本机可完成 UFS 命令）与
+   UEFI `UfsDxe` 的 UIC 初始化顺序，逐项排查队列启动/门铃/中断/cache 维护。
+   分析文档：[docs/ufs-tur-analysis-2026-11-22.md](docs/ufs-tur-analysis-2026-11-22.md)。
+2. **A2 分区 + 写根镜像**（UFS 通了之后再做）：[docs/a2-partition-runbook.md](docs/a2-partition-runbook.md)。
+3. APFS 根卷挂载 → 用户态 init（pong `/pong/init`）→ 软件 UI → SpringBoard。
 
-## 七、从零构建
+## 八、硬性规则（本仓库历史教训）
 
-需要：Linux x86_64、Python 3、约 60 GB 磁盘、能下载 IPSW。
+- **除已授权的 A2 方案外，不写任何 Android 分区**；所有实验默认 `fastboot boot`。
+- 任何永久性/破坏性操作前先备份（`/sdcard` 与 GPT 均有备份件）。
+- 上游仓库（`document97/*`、`QPRS-6/*`、`Project-Silicium/*` 等）只读，不改上游；
+  所有本地修改只在构建沙箱或 `ci/patches/` 中维护。
+- 结论区分「已验证」与「推测」，都附实机证据（屏上日志/诊断/寄存器）。
 
-```bash
-# 1) 代码
-git clone https://github.com/Fly116/UniXNU-liuqin      # 设备仓库（含 board.toml / patches / drivers）
-git clone https://github.com/Fly116/UniXNU-new         # 构建驱动（unixnu CLI）
-git clone https://github.com/UniXNU/Mu-Silicium        # UEFI（仓库内称 uefi-liuqin）
+## 九、文档索引
 
-# 2) 工具链（装到 /opt/unixnu-linux）
-python3 UniXNU-new/scripts/linux/setup-toolchain.py
+**当前主线（2026-11-21/22）**
 
-# 3) 从官方线刷包抽厂商 UEFI 模块（需要 V14.0.9.0 之类的线刷包）
+| 文档 | 内容 |
+|---|---|
+| [docs/prelink-slide-exclusion-2026-11-21.md](docs/prelink-slide-exclusion-2026-11-21.md) | v106–v110 变量排除：slide / DTB / ADT 容器 |
+| [docs/v112-upstream-kernel-2026-11-21.md](docs/v112-upstream-kernel-2026-11-21.md) | 用上游最新源码重编内核；CI 踩坑记录 |
+| [docs/v114-root-device-ufs-2026-11-22.md](docs/v114-root-device-ufs-2026-11-22.md) | 到达 root device；AppleARMCPU 补丁 |
+| [docs/ufs-tur-analysis-2026-11-22.md](docs/ufs-tur-analysis-2026-11-22.md) | 当前 UFS TUR 失败的诊断与实验计划 |
+| [docs/a2-partition-runbook.md](docs/a2-partition-runbook.md) | A2 分区执行手册（已校验 GPT） |
+| [docs/menu-default-entry.md](docs/menu-default-entry.md) | 菜单默认项修复 |
 
-# 4) 准备 IPSW（iPad7,1 17.7.11 / 21H461）
-#    放到 F:\\liuqin_ios\\_dl\\ 或任意路径，用 --ipsw 指定
+**历史档案（旧栈 / 早期 bring-up）**
 
-# 5) 构建
-python3 UniXNU-new/unixnu build kernel  -D device-new
-python3 UniXNU-new/unixnu build payload --kernel out/liuqin/kernel/kernel.macho \
-        --unique-chip-id 0x84750A0B0C0D0001 -D device-new
-python3 device-new/scripts/wrap-payload-mbr.py out/liuqin/payload/payload.img out/liuqin/payload/payload-mbr.img
-python3 UniXNU-new/unixnu bootimg --uefi uefi-liuqin --fd .../SILICIUM_UEFI.fd \
-        --dtb .../liuqin.dtb --ramdisk out/liuqin/payload/payload-mbr.img -D device-new
-```
+- [docs/liuqin-on-pong-stack.md](docs/liuqin-on-pong-stack.md)、[docs/route-b-qprs6.md](docs/route-b-qprs6.md)、[docs/route-yz-bootchain-log.md](docs/route-yz-bootchain-log.md)
+- [docs/bringup-2026-11-19-session.md](docs/bringup-2026-11-19-session.md)、[docs/bringup-2026-11-19-v57-regwalk.md](docs/bringup-2026-11-19-v57-regwalk.md)
+- [docs/b1-unixnu-partition-plan.md](docs/b1-unixnu-partition-plan.md)、[docs/userdata-build-plan.md](docs/userdata-build-plan.md)、[docs/userdata-carve-plan.md](docs/userdata-carve-plan.md)
+- [docs/porting-plan.md](docs/porting-plan.md)、[docs/route-plan-2026-11-15.md](docs/route-plan-2026-11-15.md)、[docs/linux-bringup-tutorial.md](docs/linux-bringup-tutorial.md)
+- [docs/v39-linux-bringup.md](docs/v39-linux-bringup.md)、[docs/v39-metaclass-repair.md](docs/v39-metaclass-repair.md)
+- [docs/liuqin-hardware.md](docs/liuqin-hardware.md)、[docs/liuqin-usb-debug.md](docs/liuqin-usb-debug.md)、[docs/vendor-inputs.md](docs/vendor-inputs.md)、[docs/liuqin-boot-progress.md](docs/liuqin-boot-progress.md)
 
-### 构建的三个大坑（必读）
+**可复现脚本**
 
-1. **`patches/xnu/*.patch` 不会自动应用**。构建脚本只编译 `.cache/xnu-work` 里已有的源码，
-   补丁需要**手动** `patch -p1 <` 到 `out/liuqin/tree/.cache/xnu-work/` 再构建。
-   漏应用或在错误顺序下应用，会出现 `start.s: patch does not apply` 或
-   `Native kernel lacks sparse-prelink index ABI` 之类的报错。
-2. **`XNU_SHENG_PMGR` 默认 0**，`sheng_pmgr_run()` 根本不会被编译进去
-   （`board.toml` 里 `sheng-pmgr=2` 只是 boot arg 门禁，不代表代码在）。
-3. 环境变量至少要设：`UNIXNU_PATCH_LIST=manual`、
-   `XNU_OWNER_ROOT_VOLUME_UUID=18AB5557-DC2D-469B-8758-855E60F5B0DF`。
+| 脚本 | 用途 |
+|---|---|
+| [docs/ci-fetch-kernel.sh](docs/ci-fetch-kernel.sh) | 下载/解密 CI 内核产物 |
+| [docs/make-v112.sh](docs/make-v112.sh) | 官方 finalize 组装可引导镜像 |
+| [docs/make-boot-v4.py](docs/make-boot-v4.py) | 通用 Android boot v4 打包 |
+| [docs/make-boot-native-kernel.py](docs/make-boot-native-kernel.py) | 换内核进 payload 的打包脚本 |
+| [docs/build-firmware-from-upstream.sh](docs/build-firmware-from-upstream.sh) | 用上游源码 + 锁定 EDK2 重编固件 |
+| [docs/wrap-pongfat.py](docs/wrap-pongfat.py) | PONGFAT1 包装器 |
+| [docs/patch-menu-no-rotate.patch](docs/patch-menu-no-rotate.patch) | 菜单默认项修复补丁 |
 
----
+## 十、免责声明
 
-## 八、实机调试方法论（血泪经验）
-
-本平台的调试手段有限，**用错通道会得出错误结论**（我们在这上面浪费了很久）：
-
-| 通道 | 可靠性 | 说明 |
-|------|--------|------|
-| 面板里程碑 `liuqin_milestone(tag,msg)` | 🟡 内容可信、**顺序不可信** | 直接写 framebuffer，最早可用；但缓冲区会覆盖/回绕，照片里会出现编号倒序 |
-| 持久日志扇区（`unixnu` LBA 2400000） | 🟡 **仅早期可用** | `bsd_init` 缓冲缓存初始化之后 UFS 写会挂死，日志探针会反过来阻塞被测路径 |
-| `IOLog` / `printf` | 🔴 基本不可见 | 该阶段控制台未接到面板 |
-| **panic 文本块** | 🟢 最可靠 | 完整显示在最显眼位置，适合放关键状态汇总（如 `PUBSTATE ...`） |
-| `IOService::getMatchingServices()` | 🔴 不可信 | 该阶段对已有实例也返回 0 |
-
-**结论**：要判断"走到哪一步"，用里程碑；要判断"状态是什么"，把状态塞进 panic 文本。
-
----
-
-## 九、给 AI / 新手的继续开发指南
-
-### 9.1 代码地图（按重要性排序）
-
-| 路径 | 作用 |
-|------|------|
-| `drivers/ShengUfs/NativeUfs.cpp` | **主战场**：UFS 主机控制器、`startRoot`、块设备类 `NativeUfsBlock`、发布流程、绝大多数里程碑与诊断 |
-| `drivers/ShengUfs/RootCommands.h` | 传输层：SCSI 命令、PRD、槽位池、store/log 写窗口（`hostWrite4k` 是唯一写入口） |
-| `drivers/ShengUfs/RootLayout.h` | GPT 解析 + SHNGROOT 清单解析（含 `native-ufs-root-partition` / `-offset`） |
-| `drivers/ShengUfs/RootPublication.h` | prepare → validate → schedule → start/wait 的发布状态机 |
-| `drivers/ShengUfs/RootWindowRead.h` | 窗口读（bounce buffer、校验、并发） |
-| `scripts/build-liuqin-ufs-bindings.py` | **prelink 符号绑定**生成（§3.5 的战场，改动风险高） |
-| `package/ShengPlatformPower.cpp` | 平台电源 nub（默认不参与编译） |
-| `board.toml` | 板级描述 + 内核启动参数（改行为优先从这里下手） |
-| `scripts/install-liuqin-ufs-data.py` | 镜像切分/写入工具 |
-
-### 9.2 按顺序推进的建议
-
-1. **先解决 IOMedia 不出现**（§4）。不要跳到 APFS 或用户态，没有 `/dev/diskNsM` 什么都做不了。
-2. 拿到 IOMedia 之后，先验证**读**是否可靠：用 `doAsyncReadWrite` 读第 0 块并校验签名。
-   （UFS 写在 `bsd_init` 后会挂死，读共用同一套槽位，必须实测。）
-3. 再做 APFS 根卷挂载（T1）。
-4. 最后才是用户态。
-
-### 9.3 一定要避开的坑
-
-- **不要用 `IOSleep`**，也不要用任何基于 deadline 的等待（§3.4）。
-- **不要在 `bsd_init` 之后写 UFS**（日志探针也不行），会挂死。
-- **不要相信面板的行序**，也不要相信 `getMatchingServices` 的计数（§8）。
-- **不要改 `board.toml` 里的 `sheng-pmgr`**：`native-ufs-root=1` 的 payload 门禁要求恰好一个
-  `sheng-pmgr=2`，改了会直接构建失败（"AMFI otherwise panics with No PMGR"）。
-- **不要打开 `liuqin_usb=1`**：USB CDC 调试口初始化会挂在 `bsd_init:usb_start`。
-- **不要用 `fastboot flash`** 测试实验镜像；一律 `fastboot boot`。
-- 改驱动后如出现"行为完全没变化"，先确认改动真的进了 **tree 副本**
-  （`out/liuqin/tree/drivers/ShengUfs/...`），并用
-  `strings kernel.macho | grep <你的记号>` 验证。
-
-### 9.4 验证清单（每轮改动的自检）
-
-```bash
-# 1) 构建成功且 kernel sha 变化
-tail -1 out/liuqin/kernel/../liuqin/logs/../  # 见构建日志最后一行
-# 2) 关键记号进了内核
-strings out/liuqin/kernel/kernel.macho | grep -c "<新增的里程碑文本>"
-# 3) 镜像回读校验通过（bootimg 会自己做 head/hash 检查）
-# 4) 真机：fastboot boot → 面板读数 → 回 Android 读日志/看 panic
-```
-
----
-
-## 十、路线图与可行性
-
-- **T1 根卷挂载**：只差 IOMedia → BSD disk → APFS 挂载。这是当前唯一真正的工作面。
-- **T2 用户态**：`launchd` 需要可写 `/private/var`（内存盘或数据窗口）。
-- **图形界面**：受 GPU 限制，**不建议作为目标**（见顶部警告）。
-
-同 SoC 参考实现：[Emilelu/UniXNU-mondrian](https://github.com/Emilelu/UniXNU-mondrian)（红米 K60 / SM8475）。
-
----
-
-## 十一、仓库结构
-
-```
-docs/                        本轮及历次调试记录（含 bringup-2026-11-19-session.md）
-patches/
-  driver/                    NativeUfs 早期元类修复补丁
-  xnu/                       XNU 侧补丁（**需手动应用**，见 §7）
-  bringup-2026-11-18/        11-18 轮改动
-  bringup-2026-11-19/        11-19 轮改动（含最终驱动 diff：shengufs-v50-publish.diff / v52）
-drivers/ShengUfs/            UFS 驱动（子模块 / fork）
-scripts/
-  build-liuqin-ufs-bindings.py   prelink 符号绑定生成
-  install-liuqin-ufs-data.py     iOS 根镜像切分/写入
-  wrap-payload-mbr.py            payload 打包
-tests/metaclass-simtest/     元类场景主机仿真
-board.toml                   板级描述与内核启动参数
-```
-
-构建产物不入库，走 Releases（每个镜像约 66 MB）。
-
----
-
-## 十二、致谢
-
-- 上游主线：[hhyygg2009/UniXNU-liuqin](https://github.com/hhyygg2009/UniXNU-liuqin)
-- 同 SoC 参考：Emilelu/UniXNU-mondrian（SM8475）
-- 前人记录：[1696108518/UniXNU-liuqin](https://github.com/1696108518/UniXNU-liuqin)、
-  [document97/UniXNU-liuqin](https://github.com/document97/UniXNU-liuqin)
-- UEFI 层：UniXNU / Mu-Silicium
-- 设备与实机验证：**@Fly116**
-- **DeepSeek**：本仓库 2026-11-19 之后的存储链路定位（prelink slide、`IOSleep`、
-  `registerService` 链路）与大量调试脚本、文档整理，由 DeepSeek 模型驱动完成
-- UniXNU 官方与各社区机型仓
-
----
-
-
-## 十三、声明
-
-- 本项目与 Apple、小米、高通均无关联；
-- 所有实验均可能使设备无法启动，**请自行承担风险**，并提前完整备份；
-- 仓库内历史性的分区改造步骤**不可一键回滚**，请勿在主力设备上照做；
-- 代码与文档按现状提供。
+本项目仅用于在自有设备上进行操作系统移植研究，与 Apple、小米、高通均无关。
+仓库不包含任何 Apple 专有二进制（IPSW 内容、密钥等）；镜像产物只在本地生成、不上传。
+请自行承担在真机上实验的一切风险。
