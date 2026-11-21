@@ -1,55 +1,36 @@
-# 路线 Y/Z 的引导链试验记录（2026-11-21）
+# 路线 Y/Z 引导链试验记录（2026-11-21 更新）
 
 目标：把 pong 栈（QPRS-6，iPadOS 18.7.10 / Darwin 24）的内核跑到我们这台 liuqin 上。
-每一条都是真机 `fastboot boot` 的实测结果，按时间顺序。
+全部为真机 `fastboot boot` 实测。
 
-## 已确认的资产
+## 已确认（真机证据）
 
-| 资产 | 来源 | 状态 |
-|---|---|---|
-| `kernel.macho`（52,686,848 B，arm64 MH_EXECUTE） | 我们 fork 的 CI `kernel-encrypted` | ✅ 取出并验证 |
-| `volume-layout` / 真实卷 UUID | 同上 | ✅ OS `B07DF049-…`、SystemOS `5D08420A-…`、Data `5DF4DC0A-…` |
-| pong 版 `DarwinBoot24.efi`（GUID `D6112048`） | 在 Linux 上编出（29,696 B） | ✅ |
-| 他们的 `liuqinPkg`（含 `MemoryMapLib`、`PongBootMemoryDxe`） | `document97/uefi-liuqin` | ✅ 能在我们树里编过 |
-| PONGFAT1 payload 包装器 | 自写 | ✅ CRC32 校验通过 |
-| ADT 生成器 | 他们的 `make-pong-adt-ipados18.py` | ✅ Linux 可跑；窗口 256/192 MiB 两版 |
+| 结论 | 证据 |
+|---|---|
+| 他们的内核能在本机执行 | 两次进内核：`pmap_map_bd` panic、`zone_init: kmem_suballoc` panic |
+| 窗口分配是第一个坎 | 诊断屏 `NO WINDOW 10000000 BIG RUN CDC0000`（220 MiB < 需要的 256 MiB） |
+| 我们的固件把显示保留区当成 System RAM | 内核把启动数据放进去 → `pmap_map_bd` |
+| 他们的固件依赖 5 个 EDK2 补丁 | `AsmMacroLib/ Auth-Service/ Boot-Manager/ Timer/ Usb-Bus` |
+| 补丁打不上是行尾问题 | EDK2 源码 CRLF、补丁 LF；LF 归一化 + GNU `patch -l` 后 **5/5 全部成功** |
+| **他们的同源固件能在本机完整启动** | UEFI 起来、UniXNU 菜单显示正常（v90 实测） |
+| 同源固件的 PEI 不再崩 | 之前 v81 在 `0xA7104A04` `Synchronous Exception`，同源后消失 |
 
-## 试验序列与结果
+## 同源固件的构建方法（可复现）
 
-| # | 组合 | 结果 | 说明 |
-|---|---|---|---|
-| 1 | 我们固件（原版）+ pong DarwinBoot + 4 GiB 窗口 | `Out of Resources` | 窗口太大，分配不到 |
-| 2 | 同上 + 256 MiB 窗口 | **进内核**，`pmap_map_bd @pmap.c:1967` | 窗口被 DXE 挤到 `0xBB000000`（显示保留区） |
-| 3 | 固件把 `0xBB000000` 标保留、加 5 GiB 大块 | **进内核**，`zone_init: kmem_suballoc` + 栈指针无效 | 窗口落到 33 GiB，超出 `dram-size` 覆盖范围 |
-| 4 | 固件把 `0xA8000000 + 256 MiB` 标可分配 | `Out of Resources` | 诊断画面：`BIG RUN CDC0000`（220 MiB）< 256 MiB |
-| 5 | 窗口区扩到 384 MiB | 固件自检拒绝 | `Kernel Window 与 Display Reserved 重叠` |
-| 6 | 窗口缩到 **192 MiB**（改 DarwinBoot 下限 128 MiB） | **进内核**，仍 `pmap_map_bd` | 分配成功，但启动数据映射失败 |
+见 `docs/build-firmware-from-upstream.sh`。要点：
 
-## 第 6 次的关键结论
+1. 克隆 `document97/uefi-liuqin`
+2. 子模块指向我们已展开的 Mu 树；`Mu_Basecore` 用他们锁定的 commit `cfb93724`
+3. 把 EDK2 树统一成 LF（`sed -i 's/\r$//'`），否则 `git apply` 拒绝
+4. 用 GNU `patch -p1 -l` 打 5 个补丁（`git apply` 因行尾会失败）
+5. 拉齐 Mu_Basecore 子模块（brotli/mipisyst/libfdt/spdm 等）
+6. `unixnu build firmware --uefi <他们的树> --edk2 <他们的 Mu_Basecore>`
 
-`pmap_map_bd` 的 panic 条件是：
+## 产物
 
-```c
-pt_entry_t *ptep = pmap_pte(kernel_pmap, vaddr);
-if (ptep == PT_ENTRY_NULL) { panic("pmap_map_bd"); }
-```
-
-**是虚拟地址没有页表项**，不是物理内存不可用。也就是说：内核在 bootstrap 阶段给"启动数据"建映射时，
-用的 KVA 不在它预留的范围里 —— 说明**引导环境（boot_args 的布局/位置）与这个内核的期望不一致**。
-
-他们用 `BootShim` 的根本原因就在这里。但把他们的 FD 直接塞进我们的 kernel 槽，他们的 PEI 会在
-`0xA7104A04` 直接崩溃（`Synchronous Exception`），因为 PEI 还依赖 XBL HOB 等 BootShim 之外的东西。
-
-## 还没试过的两条
-
-1. **完整复刻 `build_uefi.py`**：他们的仓库有官方构建入口，但 `Common/Mu`、`Mu_Basecore`、
-   `Binaries` 都是空子模块。用我们已展开的 `Mu_Basecore`（280 MB）+ 他们的 `Platforms` 组合，
-   让 `build_uefi.py` 自己算定义，而不是我们手写 `unixnu build firmware` 的参数。
-2. **改用他们 FD 的 PEI 入口条件**：先在他们的 PEI 里加串口/屏幕打印，确认它到底在 `+0x4A04` 做什么
-   （我们有他们的源码，可以加诊断）。
-
-## 未完成
-
-- 根镜像：用户重下中（第一次被后台 curl 覆盖损坏，`userdata.7z.001` CRC 失败）
-- 分区改造（A2：userdata 84.79 GiB / unixnu 21.00 GiB）：GPT 已算好并双重校验，未执行
-- Metal 链：CI 已产出（9.2 MB），从未在真机验证
+| 文件 | 说明 |
+|---|---|
+| `boot-v90-realfw.img` | 他们的固件 + PONGFAT1 payload + 192 MiB 窗口 ADT（菜单正常，交接一闪而过） |
+| `boot-v91-haltdiag.img` | 同上 + DarwinBoot 失败冻结补丁，用于把诊断钉在屏幕上 |
+| `userdata.simg` | 11,331,461,604 B sparse，32 GiB 虚拟，3 卷，有效数据 19.39 GiB |
+| `gpt-new-head.bin` / `gpt-new-tail.bin` | 新分区表（userdata 84.79 GiB / unixnu 21.00 GiB），双表 CRC 校验过 |
