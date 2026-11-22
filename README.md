@@ -138,7 +138,49 @@ fastboot boot boot-v114-nocpuvalidate.img     # 只进内存，不写分区
 | v113 | 上游最新 native 内核 → 60 s 内崩（缺 kext 函数表） | `ac1a2428…` |
 | **v114** | v112 + AppleARMCPU 校验补丁 → **到 root device 阶段** | `0213013f678733b8c059ef132bb55217c0ca29659eaeeea0858dd3b36352437b` |
 
-## 七、下一步路线
+## 七、下载与使用（Release 现成文件）
+
+全部产物在 **Release `v114-2026-11-22`**：
+<https://github.com/Fly116/UniXNU-liuqin/releases/tag/v114-2026-11-22>
+
+### 7.1 只想看内核能跑到哪：直接用现成镜像（推荐，零构建）
+
+| 文件 | 说明 |
+|---|---|
+| `boot-v114.img` | **当前最远**（到 root device）。含：菜单修复固件 + 上游最新 prelinked 内核 + AppleARMCPU 校验补丁 + 官方 ADT/容器 + 原厂 Cape DTB |
+| `boot-v112.img` | 同 v114 但没有 AppleARMCPU 补丁（会在 CPU 校验处 panic，用于对照） |
+| `boot-v113.img` | 同源 native 内核（缺 kext 函数表，约 60 s 崩，用于对照） |
+
+```bash
+adb reboot bootloader
+fastboot boot boot-v114.img     # 只进内存；重启即恢复 Android，不写任何分区
+```
+
+> 注意：v114 会停在 panic 画面，需要长按电源 10 秒重启。
+
+### 7.2 想自己打包：内核与固件（Release 资产）
+
+| 文件 | 大小 | sha256 |
+|---|---|---|
+| `kernel-prelinked-upstream.macho` | 51,982,336 B | `ba5aad5aebca365f3c717d9da83f1acdda224865fb4ef3a331d78f2d512ffc0b`（v112 用，未打 CPU 校验补丁） |
+| `kernel-prelinked-upstream-armcpu-patch.macho` | 51,982,336 B | `157641daf9a0479b633d0bfc47f1046340d6dfac333fba594bc7839d15447039`（**v114 用**，已绕过 AppleARMCPU DT 校验） |
+| `kernel-native-upstream.macho` | 18,038,896 B | `0be638156074cc8592d680788c63ce38f0457c0ddaebee41ac341fa56d7a45a4`（native，未 prelink） |
+| `SILICIUM_UEFI-menu-patched.fd` | 3,145,728 B | `44485ef0ca1e61d714115957cab3e6d5b53746bffae1e1f05090a077d7ab47d5`（同源固件，含菜单默认项修复） |
+| `SHA256SUMS-kernel-fd.txt` | 400 B | 以上四项的校验和 |
+
+重新打包示例（复用仓库里的脚本）：
+
+```bash
+# 官方 finalize 组装：需要 document97/UniXNU-liuqin 的 scripts/ 与 dtc
+bash docs/make-v112.sh <CI-run-id> my-boot.img kernel-prelinked-upstream-armcpu-patch.macho
+```
+
+### 7.3 各镜像实际启动结果
+
+见 §六 表格。v114 的屏上日志终点：
+`Still waiting for root device` → `panic: Failed to mount root device @IOKitBSDInit.cpp:996`
+
+## 八、下一步路线
 
 1. **修 UFS 传输层**（当前唯一硬阻塞）：对照 `drivers/ShengUfs`（本机可完成 UFS 命令）与
    UEFI `UfsDxe` 的 UIC 初始化顺序，逐项排查队列启动/门铃/中断/cache 维护。
@@ -146,7 +188,7 @@ fastboot boot boot-v114-nocpuvalidate.img     # 只进内存，不写分区
 2. **A2 分区 + 写根镜像**（UFS 通了之后再做）：[docs/a2-partition-runbook.md](docs/a2-partition-runbook.md)。
 3. APFS 根卷挂载 → 用户态 init（pong `/pong/init`）→ 软件 UI → SpringBoard。
 
-## 八、硬性规则（本仓库历史教训）
+## 九、硬性规则（本仓库历史教训）
 
 - **除已授权的 A2 方案外，不写任何 Android 分区**；所有实验默认 `fastboot boot`。
 - 任何永久性/破坏性操作前先备份（`/sdcard` 与 GPT 均有备份件）。
@@ -154,7 +196,7 @@ fastboot boot boot-v114-nocpuvalidate.img     # 只进内存，不写分区
   所有本地修改只在构建沙箱或 `ci/patches/` 中维护。
 - 结论区分「已验证」与「推测」，都附实机证据（屏上日志/诊断/寄存器）。
 
-## 九、文档索引
+## 十、文档索引
 
 **当前主线（2026-11-21/22）**
 
@@ -188,8 +230,9 @@ fastboot boot boot-v114-nocpuvalidate.img     # 只进内存，不写分区
 | [docs/wrap-pongfat.py](docs/wrap-pongfat.py) | PONGFAT1 包装器 |
 | [docs/patch-menu-no-rotate.patch](docs/patch-menu-no-rotate.patch) | 菜单默认项修复补丁 |
 
-## 十、免责声明
+## 十一、免责声明
 
 本项目仅用于在自有设备上进行操作系统移植研究，与 Apple、小米、高通均无关。
-仓库不包含任何 Apple 专有二进制（IPSW 内容、密钥等）；镜像产物只在本地生成、不上传。
+仓库不包含任何 Apple 专有二进制（IPSW 内容、密钥等）；Release 里的镜像、内核与固件都是
+本项目自行构建的 bring-up 产物，不含任何 IPSW/Apple 内容。
 请自行承担在真机上实验的一切风险。
