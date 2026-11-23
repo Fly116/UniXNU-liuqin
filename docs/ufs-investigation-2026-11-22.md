@@ -1,6 +1,12 @@
 # NativeUfs 传输层调试记录（2026-11-22，v112–v124）
 
-## 1. 结论先说
+> **2026-11-23 更正：本文是 v112–v124 历史档案，不代表当前状态。** v134 已读取 GPT / userdata。
+> bit0 是 CBCR ENABLE，不是 CLK_OFF；CLK_OFF 为 bit31；GDSC SW_COLLAPSE 为 bit0。
+> `dl` 日志来自 UERDL 错误码，不是 PA_LINK_STATUS；SerDes offset0 不是 scratch，answers=0 不证明 PHY 窗口死。
+> 因而下述“固件交接前关闭 UFS”“两个窗口写不进去”等因果结论未成立，不应作为后续补丁依据。
+> 以 [最新实机报告](v134-ufs-readback-2026-11-23.md) 为准。
+
+## 1. 历史结论（含已更正推断）
 
 **UFS 传输层尚未打通**，但阻塞点已经从"不知道为什么"收敛到**一条明确的因果链**：
 
