@@ -266,3 +266,11 @@ bash docs/make-v112.sh <CI-run-id> my-boot.img kernel-prelinked-upstream-armcpu-
 - 本轮从 v134 推进到 v145：UFS transport ready、GPT/SHNGROOT、OS/SystemOS/Data APFS 挂载、用户态 `/pong/init`、触摸 ready。
 - 当前阻塞：launchd 的 dyld 启动失败（OS_REASON_DYLD）。
 - 辅助脚本：[docs/ufs-bringup-scripts/](docs/ufs-bringup-scripts/)
+
+
+### v145-2026-11-23（UFS 存储链打通）
+
+- Release：https://github.com/Fly116/UniXNU-liuqin/releases/tag/v145-2026-11-23
+- 内容：v134–v145 全部 `fastboot boot` 镜像、已打 AppleARMCPU 补丁的内核、USB ownership 固件 FD、
+  payload `unixnu.toml` 配置、SHNGROOT 清单/布局与 `SHA256SUMS`。
+- 记录文档：[docs/ufs-bringup-2026-11-23.md](docs/ufs-bringup-2026-11-23.md)
