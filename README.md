@@ -4,47 +4,54 @@
 
 > ## ⚠️ 当前仍不能进入 iPadOS 界面
 >
-> **2026-11-23 · v134 实机进度：UFS 已可读取，当前卡在根镜像布局适配。**
-> 固件 → DarwinBoot → XNU → UFS query / wake / NOP / TUR / READ CAPACITY → GPT / userdata 首块读取，已通过。
-> 最新日志：`transport ready LUN=0 block=4096 blocks=30491648`。
-> 随后驱动因沿用 pong 的固定 userdata 边界，主动 panic：`Pong userdata geometry changed`。
+> **2026-11-23 · v145 实机进度：UFS 存储链已打通，用户态 init 已运行，卡在 launchd 的 dyld 启动。**
 >
-> **尚未完成根介质发布、APFS 根挂载、用户态或 SpringBoard。** 不要为通过旧校验而重分区。
-> v134 内核强制关闭存储写入；本轮仅使用 `fastboot boot`，未 flash、未改 GPT / userdata。
-> 详见 [v134 实机报告](docs/v134-ufs-readback-2026-11-23.md) 与 [相关上游同步](docs/upstream-storage-sync-2026-11-23.md)。
+> 已验证链路：固件 → DarwinBoot → XNU → UFS 传输（`transport ready LUN=0 block=4096 blocks=30491648`）
+> → GPT / SHNGROOT 清单 → **OS / SystemOS / Data 三卷 APFS 挂载** → **用户态 `/pong/init` 执行**
+> → 触摸驱动 ready（`liuqin touch: ready: novatek_nt36532_m81_fw_csot.bin`）。
 >
-> 屏上文字来自 framebuffer / CPU 软件绘制，不代表 Adreno GPU 或系统桌面已工作。
-> 保持 Android 13 / MIUI 14 V14.0.3.0.TMYCNXM；HyperOS 2/3 的引导实验未通过，不作为当前测试路线。
+> 当前阻塞：pid 1 退出 `exit reason namespace 6`（= **OS_REASON_DYLD**）。cryptex 模式报
+> `F:arr=…`，union 模式报 `F:open`；已确认内核能打开 `/private/preboot/.../dyld_shared_cache_arm64`
+> （`shared cache path probe error=0`），正在通过重建根镜像与配置配对继续排查。
+>
+> **仍未完成**：launchd / 系统服务 / backboardd / SpringBoard。屏上文字来自 framebuffer 与 CPU
+> 软件绘制，不代表 Adreno GPU 或系统桌面已工作。
+>
+> 设备保持 **Android 13 / MIUI 14 V14.0.3.0.TMYCNXM**；HyperOS 2/3 的引导实验已证明与当前
+> BootShim/EDK2 链不兼容（UEFI 早期 `ArmCpuDxe` abort），不作为测试路线。
 
 ---
 
 ## 一、一句话现状
 
-**已从“UFS 命令无法完成”推进到“能读取 GPT 和 userdata，开始根布局适配”。**
+**已从“UFS 命令无法完成”推进到“三卷 APFS 挂载 + 用户态 init 运行，卡在 dyld”。**
 
 ```text
-启动链 → XNU → UFS 读取 → GPT / userdata → 根镜像识别 → APFS 挂载 → 用户态 → SpringBoard
-  ✅      ✅       ✅             ✅             当前卡点          未完成     未完成     未完成
+启动链 → XNU → UFS 传输 → GPT/SHNGROOT → APFS 三卷挂载 → 用户态 init → launchd → SpringBoard
+  ✅      ✅        ✅            ✅              ✅              ✅           ⏳         ⛔
 ```
 
-证据等级：一次 v134 实机测试成功读取，不代表冷启动覆盖率、长期稳定性或写入持久性已验证。
+证据等级：上述每一步均有 v134–v145 实机日志；dyld 失败原因尚未解码，根镜像重建仍在进行。
 
 ## 二、里程碑总览
 
 | # | 里程碑 | 状态 | 证据 / 说明 |
 |---|--------|------|-------------|
-| 0 | 构建链（固件 / prelink / payload / boot.img） | ✅ 已构建并校验；完整复现待补齐 | Linux 固件、macOS CI 内核；本地组装复用既有 base boot，[限制与校验](docs/v134-build-review-2026-11-23.md) |
+| 0 | 构建链（固件 / prelink / payload / boot.img） | ✅ | 本地固件重建 + macOS CI 内核 + 本地组镜像；参见 [docs/ufs-bringup-2026-11-23.md](docs/ufs-bringup-2026-11-23.md) |
 | 1 | 固件启动 → UniXNU 菜单 → payload 卷 | ✅ 实机 | 同源固件（document97/uefi-liuqin + 锁定 EDK2） |
-| 2 | 菜单默认项修复（无输入设备时不再轮换高亮） | ✅ 实机 | 见 [docs/menu-default-entry.md](docs/menu-default-entry.md) |
-| 3 | DarwinBoot → XNU → `VM bootstrap done` | ✅ 实机 | v112 起通过；v106 及之前的崩溃根因见 [docs/prelink-slide-exclusion-2026-11-21.md](docs/prelink-slide-exclusion-2026-11-21.md) |
-| 4 | IOKit 初始化、ArmDTPlatform、UFS nub、ArmCpu、APFS kext | ✅ 实机 | v114 日志：`apfs_module_start`、`ArmCpu: CPU 0 first boot completed` |
-| 5 | Framebuffer 输出（1800×2880 / 7200 B/行） | ✅ 实机 | `MiniIOFramebuffer: Pong fixed refresh 120 Hz`（软件绘制，非 GPU） |
-| 6 | AppleARMCPU 的 DT 校验 | ✅ 绕过 | 其要求 Apple 私有 CPU 属性；用二进制补丁 `_validateConfiguration` 返回 true |
-| 7 | **UFS 读取传输** | ✅ v134 实机 | query / wake / NOP / TUR / capacity、GPT 和 userdata 首块读取通过；写入关闭 |
-| 8 | 根镜像布局识别 | 🔧 当前卡点 | 先修 pong 固定边界校验，再确认 SHNGROOT / 文件根镜像；旧 A2 手册仅历史参考，不自动执行 |
-| 9 | APFS 根卷挂载（T1 的前半） | ⛔ 未完成 | 等根布局适配与文件系统验证 |
-| 10 | 用户态（pong init / launchd） | ⛔ 未开始 | 上游 pong 上已实现，liuqin 待调 |
-| 11 | 图形界面 / SpringBoard | ⛔ 未开始 | 走软件 UI 路线（`libpong-ui`）；GPU 后置 |
+| 2 | 菜单默认项修复（无输入设备时不轮换高亮） | ✅ 实机 | [docs/menu-default-entry.md](docs/menu-default-entry.md) |
+| 3 | DarwinBoot → XNU → `VM bootstrap done` | ✅ 实机 | v112 起；prelink slide 修复见 [docs/prelink-slide-exclusion-2026-11-21.md](docs/prelink-slide-exclusion-2026-11-21.md) |
+| 4 | IOKit / ArmDTPlatform / UFS nub / ArmCpu / APFS kext | ✅ 实机 | `apfs_module_start`、`ArmCpu: CPU 0 first boot completed` |
+| 5 | Framebuffer 输出（1800×2880 / 7200 B/行） | ✅ 实机 | 软件绘制（非 GPU） |
+| 6 | AppleARMCPU DT 校验绕过 | ✅ | `_validateConfiguration` → `mov w0,#1; ret` |
+| 7 | **UFS 传输（query/wake/NOP/TUR/capacity）** | ✅ v134 起 | 之后所有版本均 `transport ready LUN=0 block=4096` |
+| 8 | GPT / SHNGROOT 清单解析 | ✅ v135 | `SHNGROOT manifest ok windows=3`，OS/SystemOS 磁盘发布 |
+| 9 | **APFS 三卷挂载（OS / SystemOS / Data）** | ✅ v136–v137 | OS 根挂载、SystemOS 挂载、Data `rw=1`（`/private/var`） |
+| 10 | **用户态 init（`/pong/init`）执行** | ✅ v136 起 | `userland adapter / 18.7.10 22H374 / static arm64` |
+| 11 | 触摸（NT36532） | ✅ v137 | 固件 245,760 B、16 分区、`ready: polling every 8 ms` |
+| 12 | **launchd（dyld）** | ⏳ **当前卡点** | `pid 1 exited -- exit reason namespace 6`（OS_REASON_DYLD） |
+| 13 | launchd 服务栈 / backboardd / 软件 UI | ⛔ 未开始 | 等 dyld 通过 |
+| 14 | 图形界面 / SpringBoard | ⛔ 未开始 | 软件 UI 路线优先（`libpong-ui`），GPU 后置（计划移植 zizhan 同 SM8475 的 PongAdreno） |
 
 不提供没有测量依据的完成百分比；以实机里程碑为准。
 
@@ -54,38 +61,38 @@
 |---|---|---|
 | 设备仓库 | `Fly116/UniXNU-liuqin`（sheng 派生） | `document97/UniXNU-liuqin@fe0e8d7`（上游最新） |
 | iOS | iPadOS 17.7.11 / 21H461 | iPadOS 18.7.10 / 22H374（Darwin 24.6.0） |
-| 存储驱动 | ShengUfs（历史路线；读取/根路径证据与写入正确性需分别核实） | NativeUfs + CI 变体 V（当前 UFS 读取通过，根布局待适配） |
+| 存储驱动 | ShengUfs（历史路线） | NativeUfs + CI 变体（q–z） |
 | 构建 | Linux | GitHub Actions `macos-15-intel` |
 | 状态 | 暂停（保留文档与补丁） | **主线** |
 
-ShengUfs 是有价值的实现对照，但本轮核对的 hhyygg 实测来自另一台同型号设备，不能等同本机/同固件；持久写入正确性不能仅凭 README 宣称。两条路线均需区分固件链路接管与 PHY 冷启动。
+两条路线都需区分「固件链路接管」与「PHY 冷启动」；本轮 PHY 冷初始化是否真正成功仍未证明——
+成功路径可能包含对固件现成链路的接管。
 
-## 四、最近的关键突破
+## 四、最近的关键突破（2026-11-23）
 
-### 2026-11-23：v134 / V
+| 版本 | 内容 | 结果 |
+|---|---|---|
+| v134 / V | GCC CBCR 位语义修正（bit0=ENABLE、bit31=CLK_OFF）、GDSC SW_COLLAPSE=bit0、v6 PHY reset、volatile 描述符 | **首次 `transport ready LUN=0 block=4096`**，GPT/userdata 可读；停在 pong 固定边界校验 |
+| v135 / W | liuqin GPT 几何校验改为动态 + SHNGROOT 诊断 | SHNGROOT 清单通过，OS/SystemOS 磁盘发布；Data 窗口签名不识别 |
+| v136 / X | Data 窗口接受裸 APFS（`NXSB@32`）+ 坏窗口跳过不 panic | **用户态 `/pong/init` 运行**；Data 只读 → init 退出 |
+| v137 / Y | 恢复 `pong_ufs_readwrite` 写路径 + CI 注入 NT36532 固件 | **Data `rw=1`**、触摸 ready；dyld `F:arr` |
+| v141 / Z | SystemOS union 配置（union=1 要求 CRYPTEX_FILES=0）+ init 诊断 | union 挂载成功；dyld `F:open` |
+| v143 | 发现运行时参数真正来源是 payload `unixnu.toml` | 参数生效；`Unsupported Pong init path`（内核白名单） |
+| v144 | cryptex 内核 + 真实参数 | 缓存 probe `error=0`；dyld `F:arr` |
+| v145 | union 内核 + 离线修补适配层 env | union 挂载成功；Data APFS 对象校验错误；dyld `F:open` |
 
-- 修复 v133 描述符在 device 映射上偏移 +4 的 8 字节合并写；新产物反汇编确认为逐 32 位访问。
-- 纠正 CBCR：bit0 是 ENABLE（应置1）、bit31 是 CLK_OFF；GDSC SW_COLLAPSE 是 bit0，不是 bit30。兼顾 HWCG / NoC FSM，避免误挡正常空闲时钟。
-- 移除不合法的 SerDes scratch 写回测试，准备 SM8475 v6 PHY 初始化、外部 reset 与 HS-B 补项；**本次日志没有执行该完整冷启动分支，不能宣称冷启验证成功**。
-- 实机已有 `transport ready LUN=0` 与 GPT/userdata 读取；终点为 pong 专属边界检查 panic。
-- [CI 45114535819](https://github.com/Fly116/liuqin-ipados18-ci/actions/runs/45114535819)，[变体补丁](https://github.com/Fly116/liuqin-ipados18-ci/blob/4abc00d2dd8b0fc71b19807a180bc582bed1ad16/ci/patches-variants/v/0001-ufs-volatile-refclk.patch)。
+关键机制（已在文档中详述）：
 
-### 2026-11-21 → 11-22 历史突破
+- **运行时 boot args 来自 payload FAT 的 `EFI/UniXNU/unixnu.toml`**，不是 `board.toml`/ADT。
+- UFS 电源：PHY `ldob5`(880 mV)/`ldoc10`(1200 mV)，设备 `ldob7`(2504 mV)/`ldob9`(1200 mV)，
+  GDSC 父供电 CX 电平轨，全部通过 AOP cmd-db 投票。
+- 传输使用固件 UTRL 页（device-mapped、16 KiB、volatile 描述符）。
+- 触摸固件由 CI 私有仓库 `ci/firmware/` 注入（`LIUQIN_TOUCH_FW_DIR`），不进入公开仓库。
+- cryptex 模式内核把 SystemOS 挂到 `/private/preboot` 并设置 `DYLD_SHARED_CACHE_DIR`；
+  union 模式挂到 `/`（`MNT_UNION`）且不设置该 env——镜像/适配层与内核模式必须严格配对。
 
-1. **prelink slide 用错导致 VM bootstrap panic**
-   CI 原来用 `--slide=-0x1000000`（21H461 的数字），把 kexts 放到内核 text 之下，与内核内建绑定基址
-   `0xfffffff00b000000` 错位。改用上游 `slide = "auto"`（由 22H374 kernelcache 派生，实际为
-   `0x5ed0000`）后该 panic 消失。详见 [docs/prelink-slide-exclusion-2026-11-21.md](docs/prelink-slide-exclusion-2026-11-21.md)。
-2. **上游最新源码重编**：`document97/UniXNU-liuqin@fe0e8d7`（2026-11-21 drop）比原先 pin 的
-   QPRS-6 版本新，含 UFS/SMMU 修复与 PRNG/crypto 兜底补丁。CI 工作流见
-   [docs/v112-upstream-kernel-2026-11-21.md](docs/v112-upstream-kernel-2026-11-21.md)。
-3. **AppleARMCPU 的 DT 校验绕过**：`AppleARMCPU::_validateConfiguration()` 要求 Apple 私有
-   `/cpus` 属性（`max_cpus`、`cpu-id`、`interrupts`、`function-ipi_*`），我们的非 Apple 设备树
-   永远满足不了。二进制补丁把该函数入口改成 `mov w0,#1; ret` 后，内核越过该 panic。
-   详见 [docs/v114-root-device-ufs-2026-11-22.md](docs/v114-root-device-ufs-2026-11-22.md)。
-4. **菜单默认项**：无输入设备时菜单每 2 秒轮换高亮，看起来"默认停在 2: Restart"，实际超时会启动
-   第 1 项。已改固件 `Menu.c` 去掉强制轮换，高亮固定在默认项。
-5. **历史卡点（v134 已越过）**：NativeUfs TUR 无完成中断；旧调查中关于 CLK_OFF、UERDL 和 PHY 不响应的部分解释已被更正。
+历史突破（2026-11-21/22）：prelink slide 修复、上游最新源码重编、AppleARMCPU 校验绕过、
+菜单默认项修复。详见 §十 文档索引。
 
 ## 五、构建与验证
 
@@ -93,184 +100,160 @@ ShengUfs 是有价值的实现对照，但本轮核对的 hhyygg 实测来自另
 
 | 工作流 | 用途 |
 |---|---|
-| `kernel-upstream.yml` | **当前主线**：从 `document97/UniXNU-liuqin@fe0e8d7` 重编内核，`slide=auto`；`prelink=true/false` 可选；通过 `patch_dir` 选择补丁集；v134 使用 `ci/patches-variants/v` |
-| `kernel.yml` | 旧主线（QPRS-6@38ca105d），已改成正确 slide `0x5ed0000` |
-| `userdata.yml` | 生成 22H374 userdata 镜像（OS/SystemOS/Data 三窗口） |
+| `kernel-upstream.yml` | **当前主线**：从 `document97/UniXNU-liuqin@fe0e8d7` 重编内核，`slide=auto`；`patch_dir` 选择变体补丁；含 ccache、触摸固件注入、SystemOS union 配置步骤 |
+| `kernel.yml` | 旧主线（QPRS-6@38ca105d），已改正确 slide |
+| `userdata.yml` | 从 22H374 IPSW 重建 userdata 根镜像（SHNGROOT：OS/SystemOS/Data 三窗口） |
 | `metal.yml` | pong Metal（GPU）配套产物，当前 bring-up 未使用 |
 
-触发与取产物：
-
 ```bash
-# 触发（示例：prelink=true）
+# 触发（示例：变体 y = 恢复写路径）
 gh workflow run kernel-upstream.yml -R Fly116/liuqin-ipados18-ci \
   -f device_ref=fe0e8d790e24120970083e20c1a7d9c86cdbb87c \
   -f unique_chip_id=84750a0b -f prelink=true \
-  -f patch_dir=ci/patches-variants/v
+  -f patch_dir=ci/patches-variants/y
 
-# 取内核产物（解密 + 解压）
-bash docs/ci-fetch-kernel.sh <run-id> kernel-upstream-encrypted
+# 取内核产物（直连，无需代理）
+bash docs/ufs-bringup-scripts/ci_fetch_kernel_direct.sh <run-id> kernel-upstream-encrypted
 ```
 
 ### 5.2 本地：组装可引导镜像
 
 ```bash
-# 官方 finalize（ADT/容器/PONGFAT1 ramdisk）+ 我们的菜单修复固件 + 原厂 Cape DTB
-bash docs/make-v112.sh <run-id> boot.img [可选的内核 kernel.macho]
+# 经典脚本（菜单修复固件 + 原厂 Cape DTB）
+bash docs/make-v112.sh <run-id> boot.img [kernel.macho]
 
-# 变体：
-#  - 用 native 内核：<run-id> 来自 prelink=false 的构建
-#  - 二进制补丁内核：先 patch，再作为第 3 个参数传入
+# 可覆盖版本（FD / UEFI 树 / payload / DTB 均可换）
+PAYLOAD_OVERRIDE=/path/payload.img \
+FD_OVERRIDE=/path/SILICIUM_UEFI.fd \
+UEFI_OVERRIDE=/path/uefi-liuqin-d97/repo \
+CAPE_OVERRIDE=/path/liuqin.dtb \
+bash docs/ufs-bringup-scripts/make_image_override.sh <run-id> boot.img kernel.macho
 ```
 
-补丁技巧（AppleARMCPU 校验）：
+AppleARMCPU 校验补丁（固定 VA `0xfffffff00b80dad4`，文件偏移随构建变化）：
 
 ```bash
-# 按 VA 定位并检查原始指令，不能复用旧构建的硬编码文件偏移
 python3 docs/patch-armcpu-validate.py kernel.macho kernel-patched.macho
 ```
-
-v134 固定 VA 为 `0xfffffff00b80dad4`，对应文件偏移为 `0x1942ad4`；不同构建文件偏移可能变化。
 
 ### 5.3 上机
 
 ```bash
-adb reboot bootloader
-fastboot boot boot-v134-ufs-v.img  # 仅在已取得并核对上述SHA256后使用；目前未上传v134 Release资产
+adb reboot bootloader                      # 或关机后按住 音量减+电源
+fastboot boot boot-v145-union-env.img       # 只在内存启动；重启即回 Android
 ```
 
-## 六、已验证镜像
+## 六、已验证镜像（本轮）
 
-| 版本 | 内容 | sha256 |
+| 版本 | 内容 | boot.img sha256 |
 |---|---|---|
-| v106 | 旧 CI prelink（slide=-0x1000000）→ VM bootstrap panic | `5bc4f5d8…` |
-| v107 | native 内核 → 越过 VM bootstrap，停在 `read_random` NULL 表 | — |
-| v108 | 正确 slide `0x5ed0000` → 仍 VM bootstrap panic | — |
-| v109 | + 原厂 Cape DTB → 同一 panic | — |
-| v110 | 官方 finalize ADT/容器 → 同一 panic | `e96fb53b…` |
-| v111 | 菜单修复固件 | `10ccca01…` |
-| **v112** | 上游最新 prelinked 内核 → 撞 AppleARMCPU 校验 | `5f6d1bcc…` |
-| v113 | 上游最新 native 内核 → 60 s 内崩（缺 kext 函数表） | `ac1a2428…` |
-| **v114** | 历史基线：v112 + AppleARMCPU 校验补丁 → 到 root device 阶段 | `0213013f678733b8c059ef132bb55217c0ca29659eaeeea0858dd3b36352437b` |
-| **v134 / V** | **UFS 读取通过；GPT/userdata 可读；停在 pong 固定边界校验** | `bec6810fb3fadeb3512482ec395dadd8ccc33931962853e79739dbe43bac7bbf` |
+| v134 | V：存储链首次打通（重编译版） | `bec6810fb3fadeb3512482ec395dadd8ccc33931962853e79739dbe43bac7bbf` |
+| v135 | W：SHNGROOT 清单 + 磁盘发布 | `d1b0a8a66e1d…`（完整校验见 Release SHA256SUMS） |
+| v136 | X：用户态 init 首次运行 | `0db87f79caef…` |
+| v137 | Y + 触摸固件：Data `rw=1`、触摸 ready | `6a200fbd4bf3…` |
+| v141 | Z：union 挂载实验 | `c1c49152516f…` |
+| v143 | payload 真参数生效（直接 launchd 被拒） | `5871befc8c6e…` |
+| v144 | cryptex 内核 + 真参数（dyld `F:arr`） | `3a78ac04a8c8…` |
+| v145 | union 内核 + 补丁 env（dyld `F:open`） | `2141dd597b6b…` |
+
+完整 12 个镜像、9 个内核、固件 FD 与校验和见 §七 Release 资产（`SHA256SUMS-v134-v145.txt`）。
 
 ## 七、下载与使用（Release 现成文件）
 
-**最新实测版本是 v134，但本次资料同步未上传 v134 二进制 Release 资产。**
-内核来自上述 CI，镜像完整校验见 [v134 报告](docs/v134-ufs-readback-2026-11-23.md)。不要把下面的 v114 历史下载当成最新进度。
+**最新 Release：`v145-2026-11-23`**
+<https://github.com/Fly116/UniXNU-liuqin/releases/tag/v145-2026-11-23>
 
-历史 v112–v114 产物在 **Release `v114-2026-11-22`**：
-<https://github.com/Fly116/UniXNU-liuqin/releases/tag/v114-2026-11-22>
-
-### 7.1 只想看内核能跑到哪：直接用现成镜像（推荐，零构建）
-
-| 文件 | 说明 |
+| 资产 | 说明 |
 |---|---|
-| `boot-v114.img` | **历史基线**（到 root device）。含：菜单修复固件 + 上游最新 prelinked 内核 + AppleARMCPU 校验补丁 + 官方 ADT/容器 + 原厂 Cape DTB |
-| `boot-v112.img` | 同 v114 但没有 AppleARMCPU 补丁（会在 CPU 校验处 panic，用于对照） |
-| `boot-v113.img` | 同源 native 内核（缺 kext 函数表，约 60 s 崩，用于对照） |
+| `boot-v134-…` → `boot-v145-…`（12 个） | 本轮每个里程碑的 `fastboot boot` 镜像（69,009,408 B） |
+| `kernel-v130-…` → `kernel-v141-…`（9 个） | 已打 AppleARMCPU 补丁的内核，可直接替换 payload 内 `kernel.macho` |
+| `SILICIUM_UEFI-usb-ownership.fd` | 本地重编固件（含 DarwinBoot USB ownership + 菜单修正），sha `341fe1ad…` |
+| `unixnu-v143.toml` / `unixnu-v144.toml` | payload FAT 内 `unixnu.toml`（真正生效的运行时 boot args） |
+| `shngroot-ipados18.bin`、`ufs-layout.json`、`sparse-report.json`、`volume-layout.json` | SHNGROOT 清单与镜像布局 |
+| `SHA256SUMS-v134-v145.txt` | 上述全部资产的校验和 |
+
+> 32 GiB 的 `userdata.simg` 超过 GitHub 单文件 2 GiB 限制，未随 Release 上传；
+> 用 `userdata.yml` 重建（见 §5.1）或按 [docs/ufs-bringup-2026-11-23.md](docs/ufs-bringup-2026-11-23.md) §4 流程。
 
 ```bash
-adb reboot bootloader
-fastboot boot boot-v114.img     # 只进内存；重启即恢复 Android，不写任何分区
+fastboot boot boot-v145-union-env.img   # 需设备 userdata 已写入 SHNGROOT 根镜像
+# 历史基线（不需要根镜像）：
+fastboot boot boot-v114.img             # v112–v114 在 Release v114-2026-11-22
 ```
 
-> 注意：v114 会停在 panic 画面，需要长按电源 10 秒重启。
-
-### 7.2 想自己打包：内核与固件（Release 资产）
-
-| 文件 | 大小 | sha256 |
-|---|---|---|
-| `kernel-prelinked-upstream.macho` | 51,982,336 B | `ba5aad5aebca365f3c717d9da83f1acdda224865fb4ef3a331d78f2d512ffc0b`（v112 用，未打 CPU 校验补丁） |
-| `kernel-prelinked-upstream-armcpu-patch.macho` | 51,982,336 B | `157641daf9a0479b633d0bfc47f1046340d6dfac333fba594bc7839d15447039`（**v114 用**，已绕过 AppleARMCPU DT 校验） |
-| `kernel-native-upstream.macho` | 18,038,896 B | `0be638156074cc8592d680788c63ce38f0457c0ddaebee41ac341fa56d7a45a4`（native，未 prelink） |
-| `SILICIUM_UEFI-menu-patched.fd` | 3,145,728 B | `44485ef0ca1e61d714115957cab3e6d5b53746bffae1e1f05090a077d7ab47d5`（同源固件，含菜单默认项修复） |
-| `SHA256SUMS-kernel-fd.txt` | 400 B | 以上四项的校验和 |
-
-重新打包示例（复用仓库里的脚本）：
-
-```bash
-# 官方 finalize 组装：需要 document97/UniXNU-liuqin 的 scripts/ 与 dtc
-bash docs/make-v112.sh <CI-run-id> my-boot.img kernel-prelinked-upstream-armcpu-patch.macho
-```
-
-### 7.3 各镜像实际启动结果
-
-见 §六 表格。v114 的屏上日志终点：
-`Still waiting for root device` → `panic: Failed to mount root device @IOKitBSDInit.cpp:996`
+> 注意：v114 会停在 `Failed to mount root device` panic；v134–v145 会停在 dyld 退出 panic。
+> 都需长按电源 10 秒重启。
 
 ## 八、下一步路线
 
-1. 修正 NativeUfs 的 pong 固定 userdata 边界检查：按本机实际 GPT / 设备描述进行有界验证，不能直接删安全检查，也不能重分区来迎合旧常量。
-2. 只读确认 userdata 当前布局、SHNGROOT manifest 状态及 `pong_shngroot_4k` 文件根方案是否适用；不假定根镜像已经正确部署。
-3. 根介质发布 → APFS 挂载 → init / launchd → 软件 UI → SpringBoard。
-4. 保留 v134 已验证的读取接管路径、强制禁写和回退镜像。根布局修复版本尚未构建。
+1. **重建根镜像**（`userdata.yml`）→ 得到干净、完整的 SHNGROOT 镜像，排除镜像完整性与 Data 卷
+   APFS 对象校验问题。
+2. **内核模式与镜像配对**：cryptex 镜像 + cryptex 内核（v134–v137），或 union 镜像 + union 内核
+   （v141/v145）；不再用“离线改镜像字符串”的临时办法。
+3. **解码 dyld 失败**（`F:arr` / `F:open`）：核对 `dyld_shared_cache_arm64` 主缓存引用的 subcache
+   列表与镜像内分片是否齐全；必要时给 dyld 加打印（`DYLD_PRINT_*`）。
+4. dyld 通过后：launchd → 服务栈 → backboardd/CoreAnimation → 软件 UI → SpringBoard。
+5. 触摸已 ready；输入事件链路需在用户态验证。
+6. GPU（Metal）作为后置项：从 zizhan（同 SM8475）移植 PongAdreno（约 4800 行 + GMU 栈）。
 
 ## 九、硬性规则（本仓库历史教训）
 
-- **除已授权的 A2 方案外，不写任何 Android 分区**；所有实验默认 `fastboot boot`。
+- **除已授权的 A2 方案（userdata 写入）外，不写任何 Android 分区**；所有实验默认 `fastboot boot`。
 - 任何永久性/破坏性操作前先备份（`/sdcard` 与 GPT 均有备份件）。
 - 上游仓库（`document97/*`、`QPRS-6/*`、`Project-Silicium/*` 等）只读，不改上游；
-  所有本地修改只在构建沙箱或 `ci/patches/` 中维护。
-- 结论区分「已验证」与「推测」，都附实机证据（屏上日志/诊断/寄存器）。
+  本地修改只在构建沙箱或 `ci/patches*/` 中维护。
+- 厂商固件（触摸等）只存于私有 CI 仓库，不进入公开仓库。
+- 设备保持 Android 13；不要升级到 HyperOS 2/3（已证明引导链不兼容）。
+- 结论区分「已验证」与「推测」，都附实机证据（屏上日志 / 诊断 / 寄存器）。
 
 ## 十、文档索引
 
-**最新资料（2026-11-23）**
+**最新（2026-11-23）**
 
-- [v134 UFS 实机读取与当前阻塞](docs/v134-ufs-readback-2026-11-23.md)
-- [相关上游存储进度核对与可复用范围](docs/upstream-storage-sync-2026-11-23.md)
-- [V 构建/校验记录](docs/v134-build-review-2026-11-23.md)
-- [V 完整补丁副本](docs/patches/v134-variant-v.patch)
+- [docs/ufs-bringup-2026-11-23.md](docs/ufs-bringup-2026-11-23.md) —— v134–v145 完整记录
+- [docs/ufs-bringup-scripts/](docs/ufs-bringup-scripts/) —— 本轮可复用脚本
+- [docs/v134-ufs-readback-2026-11-23.md](docs/v134-ufs-readback-2026-11-23.md) —— v134 实机读取报告
+- [docs/upstream-storage-sync-2026-11-23.md](docs/upstream-storage-sync-2026-11-23.md) —— 上游存储进度核对
+- [docs/v134-build-review-2026-11-23.md](docs/v134-build-review-2026-11-23.md) —— V 构建/校验记录
+- [docs/patches/v134-variant-v.patch](docs/patches/v134-variant-v.patch) —— V 完整补丁
 
-**历史主线（2026-11-21/22；结论以最新报告为准）**
+**历史主线（2026-11-21/22）**
 
-| 文档 | 内容 |
-|---|---|
-| [docs/prelink-slide-exclusion-2026-11-21.md](docs/prelink-slide-exclusion-2026-11-21.md) | v106–v110 变量排除：slide / DTB / ADT 容器 |
-| [docs/v112-upstream-kernel-2026-11-21.md](docs/v112-upstream-kernel-2026-11-21.md) | 用上游最新源码重编内核；CI 踩坑记录 |
-| [docs/v114-root-device-ufs-2026-11-22.md](docs/v114-root-device-ufs-2026-11-22.md) | 到达 root device；AppleARMCPU 补丁 |
-| [docs/ufs-tur-analysis-2026-11-22.md](docs/ufs-tur-analysis-2026-11-22.md) | 历史 UFS TUR 失败诊断（寄存器解释有纠正，见最新报告） |
-| [docs/a2-partition-runbook.md](docs/a2-partition-runbook.md) | A2 分区执行手册（已校验 GPT） |
-| [docs/menu-default-entry.md](docs/menu-default-entry.md) | 菜单默认项修复 |
+- [docs/prelink-slide-exclusion-2026-11-21.md](docs/prelink-slide-exclusion-2026-11-21.md) —— slide / DTB / ADT 容器排除
+- [docs/v112-upstream-kernel-2026-11-21.md](docs/v112-upstream-kernel-2026-11-21.md) —— 上游源码重编内核
+- [docs/v114-root-device-ufs-2026-11-22.md](docs/v114-root-device-ufs-2026-11-22.md) —— 到 root device；AppleARMCPU 补丁
+- [docs/ufs-tur-analysis-2026-11-22.md](docs/ufs-tur-analysis-2026-11-22.md) —— 历史 UFS TUR 诊断（寄存器解释已修正）
+- [docs/a2-partition-runbook.md](docs/a2-partition-runbook.md) —— A2 分区手册
+- [docs/menu-default-entry.md](docs/menu-default-entry.md) —— 菜单默认项修复
 
-**历史档案（旧栈 / 早期 bring-up）**
+**历史档案**
 
-- [docs/liuqin-on-pong-stack.md](docs/liuqin-on-pong-stack.md)、[docs/route-b-qprs6.md](docs/route-b-qprs6.md)、[docs/route-yz-bootchain-log.md](docs/route-yz-bootchain-log.md)
-- [docs/bringup-2026-11-19-session.md](docs/bringup-2026-11-19-session.md)、[docs/bringup-2026-11-19-v57-regwalk.md](docs/bringup-2026-11-19-v57-regwalk.md)
-- [docs/b1-unixnu-partition-plan.md](docs/b1-unixnu-partition-plan.md)、[docs/userdata-build-plan.md](docs/userdata-build-plan.md)、[docs/userdata-carve-plan.md](docs/userdata-carve-plan.md)
+- [docs/liuqin-on-pong-stack.md](docs/liuqin-on-pong-stack.md)、[docs/route-b-qprs6.md](docs/route-b-qprs6.md)、
+  [docs/route-yz-bootchain-log.md](docs/route-yz-bootchain-log.md)
+- [docs/bringup-2026-11-19-session.md](docs/bringup-2026-11-19-session.md)、
+  [docs/bringup-2026-11-19-v57-regwalk.md](docs/bringup-2026-11-19-v57-regwalk.md)
+- [docs/b1-unixnu-partition-plan.md](docs/b1-unixnu-partition-plan.md)、
+  [docs/userdata-build-plan.md](docs/userdata-build-plan.md)、[docs/userdata-carve-plan.md](docs/userdata-carve-plan.md)
 
 **可复现脚本**
 
 | 脚本 | 用途 |
 |---|---|
-| [docs/ci-fetch-kernel.sh](docs/ci-fetch-kernel.sh) | 下载/解密 CI 内核产物 |
-| [docs/make-v112.sh](docs/make-v112.sh) | 官方 finalize 组装可引导镜像 |
+| [docs/ci-fetch-kernel.sh](docs/ci-fetch-kernel.sh) | 下载/解密 CI 内核产物（旧版，走代理） |
+| [docs/ufs-bringup-scripts/ci_fetch_kernel_direct.sh](docs/ufs-bringup-scripts/ci_fetch_kernel_direct.sh) | 直连下载/解密（无代理环境） |
+| [docs/ufs-bringup-scripts/push_variant.py](docs/ufs-bringup-scripts/push_variant.py) | 推送变体补丁并触发 CI |
+| [docs/ufs-bringup-scripts/make_image_override.sh](docs/ufs-bringup-scripts/make_image_override.sh) | 可覆盖 FD/UEFI/payload/DTB 的组镜像脚本 |
+| [docs/make-v112.sh](docs/make-v112.sh) | 官方 finalize 组装可引导镜像（经典版） |
 | [docs/make-boot-v4.py](docs/make-boot-v4.py) | 通用 Android boot v4 打包 |
 | [docs/make-boot-native-kernel.py](docs/make-boot-native-kernel.py) | 换内核进 payload 的打包脚本 |
-| [docs/build-firmware-from-upstream.sh](docs/build-firmware-from-upstream.sh) | 用上游源码 + 锁定 EDK2 重编固件 |
+| [docs/build-firmware-from-upstream.sh](docs/build-firmware-from-upstream.sh) | 上游源码 + 锁定 EDK2 重编固件 |
 | [docs/wrap-pongfat.py](docs/wrap-pongfat.py) | PONGFAT1 包装器 |
 | [docs/patch-menu-no-rotate.patch](docs/patch-menu-no-rotate.patch) | 菜单默认项修复补丁 |
 
 ## 十一、免责声明
 
 本项目仅用于在自有设备上进行操作系统移植研究，与 Apple、小米、高通均无关。
-源码资料同步不包含 token、artifact 密码、IPSW、密钥或新的系统二进制。
+源码资料同步不包含 token、artifact 密码、IPSW、密钥或新的系统二进制（Release 资产为本地构建产物）。
 历史 prelinked 内核/镜像可能包含从 Apple IPSW 提取的组件，不能笼统称为“完全不含 Apple 内容”；
-使用、构建及分发前须自行核对适用许可和权利。本次仅同步源码补丁、工具、文档和日志照片，不新增二进制 Release 资产。
+使用、构建及分发前须自行核对适用许可和权利。
 请自行承担在真机上实验的一切风险。
-
-
-## 2026-11-23：UFS 存储链打通
-
-- 记录文档：[docs/ufs-bringup-2026-11-23.md](docs/ufs-bringup-2026-11-23.md)
-- 本轮从 v134 推进到 v145：UFS transport ready、GPT/SHNGROOT、OS/SystemOS/Data APFS 挂载、用户态 `/pong/init`、触摸 ready。
-- 当前阻塞：launchd 的 dyld 启动失败（OS_REASON_DYLD）。
-- 辅助脚本：[docs/ufs-bringup-scripts/](docs/ufs-bringup-scripts/)
-
-
-### v145-2026-11-23（UFS 存储链打通）
-
-- Release：https://github.com/Fly116/UniXNU-liuqin/releases/tag/v145-2026-11-23
-- 内容：v134–v145 全部 `fastboot boot` 镜像、已打 AppleARMCPU 补丁的内核、USB ownership 固件 FD、
-  payload `unixnu.toml` 配置、SHNGROOT 清单/布局与 `SHA256SUMS`。
-- 记录文档：[docs/ufs-bringup-2026-11-23.md](docs/ufs-bringup-2026-11-23.md)
