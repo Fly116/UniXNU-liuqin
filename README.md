@@ -258,3 +258,11 @@ bash docs/make-v112.sh <CI-run-id> my-boot.img kernel-prelinked-upstream-armcpu-
 历史 prelinked 内核/镜像可能包含从 Apple IPSW 提取的组件，不能笼统称为“完全不含 Apple 内容”；
 使用、构建及分发前须自行核对适用许可和权利。本次仅同步源码补丁、工具、文档和日志照片，不新增二进制 Release 资产。
 请自行承担在真机上实验的一切风险。
+
+
+## 2026-11-23：UFS 存储链打通
+
+- 记录文档：[docs/ufs-bringup-2026-11-23.md](docs/ufs-bringup-2026-11-23.md)
+- 本轮从 v134 推进到 v145：UFS transport ready、GPT/SHNGROOT、OS/SystemOS/Data APFS 挂载、用户态 `/pong/init`、触摸 ready。
+- 当前阻塞：launchd 的 dyld 启动失败（OS_REASON_DYLD）。
+- 辅助脚本：[docs/ufs-bringup-scripts/](docs/ufs-bringup-scripts/)
