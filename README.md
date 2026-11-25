@@ -257,3 +257,13 @@ fastboot boot boot-v114.img             # v112–v114 在 Release v114-2026-11-2
 历史 prelinked 内核/镜像可能包含从 Apple IPSW 提取的组件，不能笼统称为“完全不含 Apple 内容”；
 使用、构建及分发前须自行核对适用许可和权利。
 请自行承担在真机上实验的一切风险。
+
+
+---
+
+## 2026-11-25 停摆交接（项目暂停约一个月）
+
+- 完整状态与 85 根因诊断链：[docs/status-2026-11-25.md](docs/status-2026-11-25.md)
+- 诊断脚本：[docs/scripts-2026-11-25/](docs/scripts-2026-11-25/)
+- 关键结论：dyld 主缓存 block 32（off 0x80000）内核算出的数据在镜像中不存在；原版对照（sha256 e901979f…）与 ditto 复制（完全无损）已排除生成链；当前假说 UFS 尾块小 I/O，判据是 `boot-ai4-reread.img` 的 reread 行（Release v149-2026-11-25）。
+- 下一轮第一件事：`fastboot boot boot-ai4-reread.img` 拍 `PONG native4K: reread` 行。
