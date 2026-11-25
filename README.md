@@ -140,7 +140,7 @@ dyld 失败的**块级定位已完成**，剩最后一步"读取路径 vs 数据
 
 > 💾 **本节用到的脚本、补丁、payload、固件链与根镜像，网盘里都有现成备份**（见 §12.8）：
 > `variant-tree-2026-11-25.tar.gz`（含全部脚本与 .git 历史）、`payloads-patches-2026-11-25.tar.gz`、
-> `userdata-*.simg`、`boot-images.tar.gz`。不想从零搭环境时，先从网盘解包，再按 5.2/5.3 组装即可。
+> `userdata-*.simg`、`boot-image(位于boot文件夹中，包含了所有生成过的的boot文件)`。不想从零搭环境时，先从网盘解包，再按 5.2/5.3 组装即可。
 
 ### 5.1 CI（GitHub Actions，仓库 `Fly116/liuqin-ipados18-ci`）
 
