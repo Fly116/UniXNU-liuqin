@@ -417,7 +417,7 @@ fastboot reboot
 | `Nested panic detected … pe_init.c:757` | pid 1 死后的次生 panic | 不单独处理 |
 
 ### 12.10 联系与接手
-- 仓库所有者：Fly116（GitHub）。
+- 仓库所有者：Fly116（GitHub）邮箱：forrest.wong@foxmail.com。
 - 本仓 Issue 可直接提问；接手前请先读 [docs/status-2026-11-25.md](docs/status-2026-11-25.md) 全文。
 - 若你改进后要回馈：提 PR 到本仓（文档/脚本）或 CI 仓（工作流/变体），保持"上游只读"原则。
 
