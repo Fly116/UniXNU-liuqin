@@ -1,8 +1,8 @@
 # UniXNU for Xiaomi Pad 6 Pro（liuqin / SM8475）
 
-在高通骁龙 8+ Gen 1（SM8475）的小米平板 6 Pro 上把 XNU（Darwin / iPadOS 内核）跑起来的不完整移植仓库。
+在高通骁龙 8+ Gen 1（SM8475）的小米平板 6 Pro 上把 XNU（Darwin / iPadOS 内核）跑起来的移植仓库。
 
-> ## ⚠️ 项目暂停中（2026-11-25 起约一个月）；当前仍不能进入 iPadOS 界面
+> ## ⚠️ 项目暂停中（大约于2026年12月底至2027年1月初恢复）；当前仍不能进入 iPadOS 界面
 >
 > **2026-11-25 状态：UFS 存储链、三卷 APFS、用户态 init 全部打通；launchd 的 dyld 启动被
 > `fcntl(F_ADDFILESIGS)` 返回 85 (EBADEXEC) 拒绝——根因已定位到具体的数据块（见 §一/§四）。**
@@ -426,8 +426,8 @@ fastboot reboot
 本项目的每一步都建立在众多开源项目与移植者的工作之上。按贡献类型列出（如有遗漏，欢迎补充）：
 
 **上游与同设备仓库**
+- **hhyygg2009**（`hhyygg2009/UniXNU-liuqin`）—— **Sheng 栈的 liuqin 移植主栈；UFX/ShengUfs 驱动、AMFI execve 墙的结案分析、`amfi_get_out_of_my_way` 思路、大量实机日志与文档；本仓库主要构建于此仓库**
 - **UniXNU**（[unixnu.com](https://unixnu.com/zh/porting/)）—— 内核构建工具链、设备仓库规范、4K/16K 签名机制文档（`native-4k-signature-hash-cache`），是整条路线的基础。
-- **hhyygg2009**（`hhyygg2009/UniXNU-liuqin`）—— Sheng 栈的 liuqin 移植主栈；UFX/ShengUfs 驱动、AMFI execve 墙的结案分析、`amfi_get_out_of_my_way` 思路、大量实机日志与文档。
 - **document97**（`document97/UniXNU-liuqin`）—— pong 栈的 liuqin 移植（本仓库当前主线的设备源）；NativeUfs/ShengUfs、UFS TUR/SMMU 诊断、USB CDC 修复、trust cache 脚本，以及 11-17/11-18 的 UFS 突破。
 - **QPRS-6**（`QPRS-6/iPadOS18-liuqin`）—— 同设备同系统（22H374）**已跑到 SpringBoard** 的参考实现；PongPlatform24 组件、trustcache 进 payload 的配方、dyld 缓存与 systemos 重建的踩坑记录。
 - **qiumochen**（`qiumochen/UniXNU-zizhan`）—— 小米 MIX Fold 2（同 SM8475）的完整移植；`launchd_unsecure_cache`、`/chosen zizhan-boot-args`（XNU patch 0035）、GPU/蓝牙/输入参考。
